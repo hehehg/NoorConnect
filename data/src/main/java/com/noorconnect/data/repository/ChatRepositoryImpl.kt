@@ -172,7 +172,7 @@ class ChatRepositoryImpl @Inject constructor(
     override suspend fun searchPublicChats(query: String): AppResult<List<Chat>> {
         val searchResult = tdLib.send(TdApi.SearchPublicChats(query, null))
         val chatIds = when (searchResult) {
-            is AppResult.Success -> searchResult.data.chatIds?.filterNotNull().orEmpty()
+            is AppResult.Success -> searchResult.data.chatIds.toList()
             is AppResult.Failure -> return searchResult
             is AppResult.Loading -> return AppResult.Loading
         }
