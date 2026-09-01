@@ -1,0 +1,4 @@
+<resources>
+    <!-- Do NOT use "Telegram" in the name/branding — required by Telegram's third-party client terms. -->
+    <string name="app_name">NoorConnect</string>
+</resources>

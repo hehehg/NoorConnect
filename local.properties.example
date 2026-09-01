@@ -1,0 +1,7 @@
+# انسخ الملف ده لـ local.properties (في نفس المكان) وحط بياناتك الحقيقية.
+# local.properties متتضافش لـ git خالص (شايفة .gitignore).
+sdk.dir=/path/to/your/Android/sdk
+
+# من https://my.telegram.org -> API Development Tools
+TELEGRAM_API_ID=123456
+TELEGRAM_API_HASH=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

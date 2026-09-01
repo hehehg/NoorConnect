@@ -1,0 +1,7 @@
+<resources>
+    <!-- Mirrors NoorColors in :core:designsystem — XML resources (splash screen, themes)
+         can't reference Kotlin constants directly, so these two definitions are kept manually
+         in sync. If you change the palette, update both Color.kt and this file together. -->
+    <color name="noor_green_50">#0F6E4C</color>
+    <color name="noor_gold_50">#D4AF37</color>
+</resources>

@@ -1,0 +1,22 @@
+<resources>
+    <!--
+      Minimal platform theme — enough for ComponentActivity to host Compose content.
+      Deliberately NOT "Theme.Material3.*" (that comes from com.google.android.material:material,
+      the View/XML Material Components library, which this project doesn't depend on — all UI
+      here is Jetpack Compose, where MaterialTheme is plain Kotlin, not an XML style).
+    -->
+    <style name="Theme.NoorConnect" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/white</item>
+    </style>
+
+    <!--
+      Splash theme (androidx.core:core-splashscreen — works back to API 21, not just the
+      platform SplashScreen API which is 31+). MainActivity uses this as its manifest theme;
+      postSplashScreenTheme is what it switches to right after, so no second manual swap needed.
+    -->
+    <style name="Theme.NoorConnect.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/noor_green_50</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.NoorConnect</item>
+    </style>
+</resources>
