@@ -12,6 +12,31 @@ data class MessagePhoto(
     val height: Int,
 )
 
+/** A message's generic file attachment (TdApi.MessageDocument) — anything that isn't a photo,
+ *  audio, or video (PDFs, zips, etc.). Backs the "الملفات" search tab. */
+data class MessageDocument(
+    val fileId: Int,
+    val fileName: String,
+    val mimeType: String,
+)
+
+/** A message's audio attachment (TdApi.MessageAudio) — music/voice files with metadata, as
+ *  opposed to a plain document. Backs the "الصوتيات" search tab. */
+data class MessageAudio(
+    val fileId: Int,
+    val title: String,
+    val performer: String,
+    val durationSeconds: Int,
+)
+
+/** A message's video attachment (TdApi.MessageVideo). Backs the "الفيديوهات" search tab. */
+data class MessageVideo(
+    val fileId: Int,
+    val durationSeconds: Int,
+    val width: Int,
+    val height: Int,
+)
+
 data class Message(
     val id: Long,
     val chatId: Long,
@@ -20,4 +45,7 @@ data class Message(
     val timestamp: Long,
     val isOutgoing: Boolean,
     val photo: MessagePhoto? = null,
+    val document: MessageDocument? = null,
+    val audio: MessageAudio? = null,
+    val video: MessageVideo? = null,
 )
