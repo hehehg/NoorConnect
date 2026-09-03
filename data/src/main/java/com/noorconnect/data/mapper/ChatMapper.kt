@@ -2,7 +2,10 @@ package com.noorconnect.data.mapper
 
 import com.noorconnect.domain.model.Chat
 import com.noorconnect.domain.model.Message
+import com.noorconnect.domain.model.MessageAudio
+import com.noorconnect.domain.model.MessageDocument
 import com.noorconnect.domain.model.MessagePhoto
+import com.noorconnect.domain.model.MessageVideo
 import org.drinkless.tdlib.TdApi
 
 /**
@@ -15,7 +18,11 @@ fun TdApi.Chat.toDomain(): Chat = Chat(
     lastMessage = lastMessage?.toDomain(),
     unreadCount = unreadCount,
     isChannel = type is TdApi.ChatTypeSupergroup && (type as TdApi.ChatTypeSupergroup).isChannel,
-    isGroup = type is TdApi.ChatTypeBasicGroup || type is TdApi.ChatTypeSupergroup,
+    // Must exclude channels explicitly: a channel IS a TdApi.ChatTypeSupergroup with
+    // isChannel=true, so without the exclusion every channel would also count as a group and
+    // leak into a "groups" tab/filter alongside real groups.
+    isGroup = type is TdApi.ChatTypeBasicGroup ||
+        (type is TdApi.ChatTypeSupergroup && !(type as TdApi.ChatTypeSupergroup).isChannel),
     // photo.small is the low-res version TDLib expects list/avatar UI to use; .big is only for
     // an opened profile view. Deliberately just the file id here, not a download call — see
     // Chat.photoFileId's kdoc for why that belongs in the UI/data layer that owns downloads.
@@ -35,6 +42,9 @@ fun TdApi.Message.toDomain(): Message {
         text = when (messageContent) {
             is TdApi.MessageText -> messageContent.text.text
             is TdApi.MessagePhoto -> messageContent.caption?.text.orEmpty()
+            is TdApi.MessageDocument -> messageContent.caption?.text.orEmpty()
+            is TdApi.MessageAudio -> messageContent.caption?.text.orEmpty()
+            is TdApi.MessageVideo -> messageContent.caption?.text.orEmpty()
             else -> ""
         },
         timestamp = date.toLong(),
@@ -45,5 +55,24 @@ fun TdApi.Message.toDomain(): Message {
             ?.filterNotNull()
             ?.maxByOrNull { it.width }
             ?.let { size -> MessagePhoto(fileId = size.photo.id, width = size.width, height = size.height) },
+        document = (messageContent as? TdApi.MessageDocument)?.document?.let { doc ->
+            MessageDocument(fileId = doc.document.id, fileName = doc.fileName, mimeType = doc.mimeType)
+        },
+        audio = (messageContent as? TdApi.MessageAudio)?.audio?.let { audio ->
+            MessageAudio(
+                fileId = audio.audio.id,
+                title = audio.title,
+                performer = audio.performer,
+                durationSeconds = audio.duration,
+            )
+        },
+        video = (messageContent as? TdApi.MessageVideo)?.video?.let { video ->
+            MessageVideo(
+                fileId = video.video.id,
+                durationSeconds = video.duration,
+                width = video.width,
+                height = video.height,
+            )
+        },
     )
 }
