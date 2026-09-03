@@ -8,6 +8,7 @@ import com.noorconnect.domain.model.Chat
 import com.noorconnect.domain.model.Message
 import com.noorconnect.domain.model.RemoteFile
 import com.noorconnect.domain.repository.ChatRepository
+import com.noorconnect.domain.repository.MediaKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -161,23 +162,34 @@ class ChatRepositoryImpl @Inject constructor(
     /**
      * Backs SearchUseCase's chat/channel/group search — this method itself does NOT filter by
      * moderation, that's entirely SearchUseCase's job (see the warning on the interface method).
-     * SearchPublicChats only returns chat ids, so each id needs a follow-up GetChat to get the
+     * Both TDLib calls only return chat ids, so each id needs a follow-up GetChat to get the
      * actual TdApi.Chat to map.
      *
-     * TDLib API note (same caveat as SendMessage above — verify against your built TdApi.java):
-     * TdApi.SearchPublicChats(query) is the call across recent TDLib versions, returning
-     * TdApi.Chats(totalCount, chatIds: LongArray). GetChat(chatId) resolves each id to a
-     * TdApi.Chat synchronously (TDLib keeps chats it already knows about in memory).
+     * Two TDLib calls, merged and deduplicated by id:
+     *  - TdApi.SearchPublicChats(query, null): chats the account has never opened — but this
+     *    call's own TDLib docs say it "excludes ... chats from the chat list from the results",
+     *    i.e. it will NOT find a channel/group the person already joined.
+     *  - TdApi.SearchChatsOnServer(query, null, limit): searches title/username server-side with
+     *    no such exclusion, so it's what actually covers already-known chats. Using this alone
+     *    instead would miss channels the account has heard of but never opened, so both are kept.
+     *
+     * A failure from one call doesn't fail the whole search as long as the other succeeds —
+     * only returns Failure if both do.
+     *
+     * TDLib API note (verify against your built TdApi.java, per the SendMessage note above):
+     * TdApi.Chats(totalCount, chatIds: LongArray) is the return type of both search calls.
      */
-    override suspend fun searchPublicChats(query: String): AppResult<List<Chat>> {
-        val searchResult = tdLib.send(TdApi.SearchPublicChats(query, null))
-        val chatIds = when (searchResult) {
-            is AppResult.Success -> searchResult.data.chatIds.toList()
-            is AppResult.Failure -> return searchResult
-            is AppResult.Loading -> return AppResult.Loading
-        }
+    override suspend fun searchChats(query: String): AppResult<List<Chat>> {
+        val publicResult = tdLib.send(TdApi.SearchPublicChats(query, null))
+        val knownResult = tdLib.send(TdApi.SearchChatsOnServer(query, null, CHAT_SEARCH_LIMIT))
 
-        val chats = chatIds.mapNotNull { chatId ->
+        val publicIds = (publicResult as? AppResult.Success)?.data?.chatIds?.toList().orEmpty()
+        val knownIds = (knownResult as? AppResult.Success)?.data?.chatIds?.toList().orEmpty()
+
+        if (publicResult is AppResult.Loading || knownResult is AppResult.Loading) return AppResult.Loading
+        if (publicResult is AppResult.Failure && knownResult is AppResult.Failure) return publicResult
+
+        val chats = (publicIds + knownIds).distinct().mapNotNull { chatId ->
             when (val getChatResult = tdLib.send(TdApi.GetChat(chatId))) {
                 is AppResult.Success -> getChatResult.data.toDomain()
                 else -> null // one chat failing to resolve shouldn't fail the whole search
@@ -185,6 +197,18 @@ class ChatRepositoryImpl @Inject constructor(
         }
         return AppResult.Success(chats)
     }
+
+    /**
+     * TDLib API note (verify against your built TdApi.java): TdApi.JoinChat(chatId) — adds the
+     * current user as a member. Private/secret chats can't be joined this way (not relevant
+     * here: only ever called on public search results).
+     */
+    override suspend fun joinChat(chatId: Long): AppResult<Unit> =
+        when (val result = tdLib.send(TdApi.JoinChat(chatId))) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
 
     /**
      * Backs SearchUseCase's message search. TDLib API note (verify against your built
@@ -198,6 +222,32 @@ class ChatRepositoryImpl @Inject constructor(
      */
     override suspend fun searchMessages(query: String): AppResult<List<Message>> {
         val function = TdApi.SearchMessages(TdApi.ChatListMain(), query, "", MESSAGE_SEARCH_LIMIT, null, null, 0, 0)
+        return when (val result = tdLib.send(function)) {
+            is AppResult.Success -> AppResult.Success(
+                result.data.messages?.filterNotNull()?.map { it.toDomain() }.orEmpty(),
+            )
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+    }
+
+    /**
+     * Same TdApi.SearchMessages call as [searchMessages], but with a non-null `filter` so TDLib
+     * restricts results to one media type server-side — cheaper and more accurate than fetching
+     * everything and filtering client-side by [Message.document]/[Message.audio]/etc.
+     *
+     * TDLib API note (verify against your built TdApi.java): SearchMessagesFilterDocument /
+     * FilterAudio / FilterPhoto / FilterVideo are the no-arg filter classes; passing one in the
+     * `filter` slot of SearchMessages is otherwise identical to the unfiltered call.
+     */
+    override suspend fun searchMediaMessages(query: String, kind: MediaKind): AppResult<List<Message>> {
+        val filter: TdApi.SearchMessagesFilter = when (kind) {
+            MediaKind.DOCUMENT -> TdApi.SearchMessagesFilterDocument()
+            MediaKind.AUDIO -> TdApi.SearchMessagesFilterAudio()
+            MediaKind.PHOTO -> TdApi.SearchMessagesFilterPhoto()
+            MediaKind.VIDEO -> TdApi.SearchMessagesFilterVideo()
+        }
+        val function = TdApi.SearchMessages(TdApi.ChatListMain(), query, "", MESSAGE_SEARCH_LIMIT, filter, null, 0, 0)
         return when (val result = tdLib.send(function)) {
             is AppResult.Success -> AppResult.Success(
                 result.data.messages?.filterNotNull()?.map { it.toDomain() }.orEmpty(),
@@ -233,6 +283,9 @@ class ChatRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun getChatTitle(chatId: Long): String? =
+        (tdLib.send(TdApi.GetChat(chatId)) as? AppResult.Success)?.data?.title
+
     private fun TdApi.File.toRemoteFile(): RemoteFile = RemoteFile(
         fileId = id,
         localPath = local?.path?.takeIf { it.isNotBlank() },
@@ -246,6 +299,7 @@ class ChatRepositoryImpl @Inject constructor(
         private const val HISTORY_FETCH_RETRIES = 3
         private const val HISTORY_FETCH_RETRY_DELAY_MS = 400L
         private const val MESSAGE_SEARCH_LIMIT = 50
+        private const val CHAT_SEARCH_LIMIT = 50
         private const val DOWNLOAD_PRIORITY = 32
     }
 }
