@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Lock
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -35,6 +37,8 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -69,6 +73,8 @@ fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
     val isSearchActive by viewModel.isSearchActive.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val searchResult by viewModel.searchResult.collectAsStateWithLifecycle()
+    val selectedSearchTab by viewModel.selectedSearchTab.collectAsStateWithLifecycle()
+    val joinStates by viewModel.joinStates.collectAsStateWithLifecycle()
     val chatPhotoStates by viewModel.chatPhotoStates.collectAsStateWithLifecycle()
 
     ChatsScreen(
@@ -78,6 +84,8 @@ fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
         isSearchActive = isSearchActive,
         searchQuery = searchQuery,
         searchResult = searchResult,
+        selectedSearchTab = selectedSearchTab,
+        joinStates = joinStates,
         chatPhotoStates = chatPhotoStates,
         onOpenChat = onOpenChat,
         onOpenSettings = onOpenSettings,
@@ -89,6 +97,9 @@ fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
         onOpenSearch = viewModel::openSearch,
         onCloseSearch = viewModel::closeSearch,
         onSearchQueryChange = viewModel::onSearchQueryChange,
+        onSelectSearchTab = viewModel::selectSearchTab,
+        onJoin = viewModel::join,
+        onDownloadAttachment = viewModel::downloadAttachment,
     )
 }
 
@@ -101,6 +112,8 @@ private fun ChatsScreen(
     isSearchActive: Boolean,
     searchQuery: String,
     searchResult: SearchResult?,
+    selectedSearchTab: SearchTab,
+    joinStates: Map<Long, JoinState>,
     chatPhotoStates: Map<Int, ChatPhotoDownloadState>,
     onOpenChat: (Long) -> Unit,
     onOpenSettings: () -> Unit,
@@ -112,6 +125,9 @@ private fun ChatsScreen(
     onOpenSearch: () -> Unit,
     onCloseSearch: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
+    onSelectSearchTab: (SearchTab) -> Unit,
+    onJoin: (Long) -> Unit,
+    onDownloadAttachment: (Int) -> Unit,
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var folderPendingEdit by remember { mutableStateOf<ChatFolder?>(null) }
@@ -140,7 +156,12 @@ private fun ChatsScreen(
             SearchResultsContent(
                 query = searchQuery,
                 result = searchResult,
+                selectedTab = selectedSearchTab,
+                joinStates = joinStates,
                 chatPhotoStates = chatPhotoStates,
+                onSelectTab = onSelectSearchTab,
+                onJoin = onJoin,
+                onDownloadAttachment = onDownloadAttachment,
                 onOpenChat = onOpenChat,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
@@ -228,61 +249,222 @@ private fun SearchTopBar(query: String, onQueryChange: (String) -> Unit, onClose
  * makes no moderation decisions of its own. [SearchResult.QueryBlocked] shows a generic notice
  * (never which word matched — see that sealed type's kdoc for why), and every chat in
  * [SearchResult.Found] that isn't [Chat.isContentVisible] renders name-only, same as
- * [ChatRow] does for the ordinary chat list.
+ * [ChatRow] does for the ordinary chat list. One tab per result type — [SearchTab] — so a
+ * query like "مسلم" doesn't dump channels, groups, and messages into one undifferentiated list.
  */
 @Composable
 private fun SearchResultsContent(
     query: String,
     result: SearchResult?,
+    selectedTab: SearchTab,
+    joinStates: Map<Long, JoinState>,
     chatPhotoStates: Map<Int, ChatPhotoDownloadState>,
+    onSelectTab: (SearchTab) -> Unit,
+    onJoin: (Long) -> Unit,
+    onDownloadAttachment: (Int) -> Unit,
     onOpenChat: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    when {
-        query.isBlank() -> Box(modifier = modifier.padding(24.dp)) {
-            Text("اكتب كلمة للبحث في القنوات والمجموعات والرسائل")
-        }
-        result == null -> Box(modifier = modifier.padding(24.dp)) {
-            Text("جارٍ البحث...")
-        }
-        result is SearchResult.QueryBlocked -> Box(modifier = modifier.padding(24.dp)) {
-            Text("هذا البحث غير متاح")
-        }
-        result is SearchResult.Found && result.chats.isEmpty() && result.messages.isEmpty() -> {
-            Box(modifier = modifier.padding(24.dp)) { Text("لا توجد نتائج") }
-        }
-        result is SearchResult.Found -> LazyColumn(modifier = modifier) {
-            if (result.chats.isNotEmpty()) {
-                item { SectionHeader("القنوات والمجموعات") }
-                items(result.chats, key = { "chat-${it.id}" }) { chat ->
-                    ChatRow(
-                        chat = chat,
-                        photoState = chat.photoFileId?.let { chatPhotoStates[it] },
-                        onClick = { onOpenChat(chat.id) },
-                        onManageFolders = null,
-                    )
-                    HorizontalDivider()
-                }
+    Column(modifier = modifier) {
+        when {
+            query.isBlank() -> Box(modifier = Modifier.padding(24.dp)) {
+                Text("اكتب كلمة للبحث في القنوات والمجموعات والرسائل")
             }
-            if (result.messages.isNotEmpty()) {
-                item { SectionHeader("الرسائل") }
-                items(result.messages, key = { "msg-${it.message.id}" }) { hit ->
-                    SearchMessageRow(hit = hit, onClick = { onOpenChat(hit.chatId) })
-                    HorizontalDivider()
+            result == null -> Box(modifier = Modifier.padding(24.dp)) {
+                Text("جارٍ البحث...")
+            }
+            result is SearchResult.QueryBlocked -> Box(modifier = Modifier.padding(24.dp)) {
+                Text("هذا البحث غير متاح")
+            }
+            result is SearchResult.Found -> {
+                SearchTabsRow(
+                    selectedTab = selectedTab,
+                    channelsCount = result.channels.size,
+                    groupsCount = result.groups.size,
+                    messagesCount = result.messages.size,
+                    filesCount = result.files.size,
+                    audioCount = result.audio.size,
+                    photosCount = result.photos.size,
+                    videosCount = result.videos.size,
+                    onSelectTab = onSelectTab,
+                )
+                HorizontalDivider()
+
+                val tabIsEmpty = when (selectedTab) {
+                    SearchTab.CHANNELS -> result.channels.isEmpty()
+                    SearchTab.GROUPS -> result.groups.isEmpty()
+                    SearchTab.MESSAGES -> result.messages.isEmpty()
+                    SearchTab.FILES -> result.files.isEmpty()
+                    SearchTab.AUDIO -> result.audio.isEmpty()
+                    SearchTab.PHOTOS -> result.photos.isEmpty()
+                    SearchTab.VIDEOS -> result.videos.isEmpty()
+                }
+
+                if (result.isEmpty) {
+                    Box(modifier = Modifier.padding(24.dp)) { Text("لا توجد نتائج") }
+                } else if (tabIsEmpty) {
+                    Box(modifier = Modifier.padding(24.dp)) { Text("لا توجد نتائج في هذا التبويب") }
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        when (selectedTab) {
+                            SearchTab.CHANNELS -> items(result.channels, key = { "ch-${it.id}" }) { chat ->
+                                ChatRow(
+                                    chat = chat,
+                                    photoState = chat.photoFileId?.let { chatPhotoStates[it] },
+                                    onClick = { onOpenChat(chat.id) },
+                                    onManageFolders = null,
+                                    joinState = joinStates[chat.id],
+                                    onJoin = { onJoin(chat.id) },
+                                )
+                                HorizontalDivider()
+                            }
+                            SearchTab.GROUPS -> items(result.groups, key = { "gr-${it.id}" }) { chat ->
+                                ChatRow(
+                                    chat = chat,
+                                    photoState = chat.photoFileId?.let { chatPhotoStates[it] },
+                                    onClick = { onOpenChat(chat.id) },
+                                    onManageFolders = null,
+                                    joinState = joinStates[chat.id],
+                                    onJoin = { onJoin(chat.id) },
+                                )
+                                HorizontalDivider()
+                            }
+                            SearchTab.MESSAGES -> items(result.messages, key = { "msg-${it.message.id}" }) { hit ->
+                                SearchMessageRow(hit = hit, onClick = { onOpenChat(hit.chatId) })
+                                HorizontalDivider()
+                            }
+                            SearchTab.FILES -> items(result.files, key = { "file-${it.message.id}" }) { hit ->
+                                MediaResultRow(
+                                    hit = hit,
+                                    downloadState = hit.message.document?.fileId?.let { chatPhotoStates[it] },
+                                    label = hit.message.document?.fileName ?: hit.chatTitle,
+                                    onClick = { onOpenChat(hit.chatId) },
+                                    onDownload = { hit.message.document?.fileId?.let(onDownloadAttachment) },
+                                )
+                                HorizontalDivider()
+                            }
+                            SearchTab.AUDIO -> items(result.audio, key = { "audio-${it.message.id}" }) { hit ->
+                                val audio = hit.message.audio
+                                MediaResultRow(
+                                    hit = hit,
+                                    downloadState = audio?.fileId?.let { chatPhotoStates[it] },
+                                    label = audio?.title?.takeIf { it.isNotBlank() } ?: (audio?.performer ?: hit.chatTitle),
+                                    onClick = { onOpenChat(hit.chatId) },
+                                    onDownload = { audio?.fileId?.let(onDownloadAttachment) },
+                                )
+                                HorizontalDivider()
+                            }
+                            SearchTab.PHOTOS -> items(result.photos, key = { "photo-${it.message.id}" }) { hit ->
+                                MediaResultRow(
+                                    hit = hit,
+                                    downloadState = hit.message.photo?.fileId?.let { chatPhotoStates[it] },
+                                    label = hit.chatTitle,
+                                    onClick = { onOpenChat(hit.chatId) },
+                                    onDownload = null, // photos already auto-download when visible — see ChatsViewModel
+                                )
+                                HorizontalDivider()
+                            }
+                            SearchTab.VIDEOS -> items(result.videos, key = { "video-${it.message.id}" }) { hit ->
+                                MediaResultRow(
+                                    hit = hit,
+                                    downloadState = hit.message.video?.fileId?.let { chatPhotoStates[it] },
+                                    label = hit.chatTitle,
+                                    onClick = { onOpenChat(hit.chatId) },
+                                    onDownload = { hit.message.video?.fileId?.let(onDownloadAttachment) },
+                                )
+                                HorizontalDivider()
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
 
+/** One row in the files/audio/photos/videos search tabs. Same visibility rule as
+ *  [SearchMessageRow]: when [SearchMessageResult.isContentVisible] is false, the label falls
+ *  back to a generic placeholder and no download action is offered — the attachment itself
+ *  must stay hidden until the chat is reviewed, same as [ChatRow] withholds a chat's photo. */
 @Composable
-private fun SectionHeader(title: String) {
-    Text(
-        title,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+private fun MediaResultRow(
+    hit: SearchMessageResult,
+    downloadState: ChatPhotoDownloadState?,
+    label: String,
+    onClick: () -> Unit,
+    onDownload: (() -> Unit)?,
+) {
+    ListItem(
+        headlineContent = { Text(if (hit.isContentVisible) label else hit.chatTitle) },
+        supportingContent = { Text(if (hit.isContentVisible) hit.chatTitle else "قيد المراجعة") },
+        leadingContent = { AvatarBadge(label = hit.chatTitle, contentVisible = hit.isContentVisible, photoState = null) },
+        trailingContent = if (hit.isContentVisible && onDownload != null) {
+            {
+                when (downloadState) {
+                    is ChatPhotoDownloadState.Ready -> Icon(Icons.Filled.Check, contentDescription = "تم التحميل")
+                    ChatPhotoDownloadState.Downloading -> CircularProgressIndicator(modifier = Modifier.padding(4.dp), strokeWidth = 2.dp)
+                    else -> TextButton(onClick = onDownload) { Text("تحميل") }
+                }
+            }
+        } else {
+            null
+        },
+        modifier = Modifier.padding(horizontal = 4.dp).clickable(onClick = onClick),
     )
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun SearchTabsRow(
+    selectedTab: SearchTab,
+    channelsCount: Int,
+    groupsCount: Int,
+    messagesCount: Int,
+    filesCount: Int,
+    audioCount: Int,
+    photosCount: Int,
+    videosCount: Int,
+    onSelectTab: (SearchTab) -> Unit,
+) {
+    // ScrollableTabRow, not TabRow: seven tabs don't comfortably fit a fixed-width row on a
+    // phone-sized screen — a fixed TabRow would squeeze every label down to an unreadable width.
+    ScrollableTabRow(selectedTabIndex = selectedTab.ordinal, edgePadding = 8.dp) {
+        Tab(
+            selected = selectedTab == SearchTab.CHANNELS,
+            onClick = { onSelectTab(SearchTab.CHANNELS) },
+            text = { Text("القنوات ($channelsCount)") },
+        )
+        Tab(
+            selected = selectedTab == SearchTab.GROUPS,
+            onClick = { onSelectTab(SearchTab.GROUPS) },
+            text = { Text("المجموعات ($groupsCount)") },
+        )
+        Tab(
+            selected = selectedTab == SearchTab.MESSAGES,
+            onClick = { onSelectTab(SearchTab.MESSAGES) },
+            text = { Text("الرسائل ($messagesCount)") },
+        )
+        Tab(
+            selected = selectedTab == SearchTab.FILES,
+            onClick = { onSelectTab(SearchTab.FILES) },
+            text = { Text("الملفات ($filesCount)") },
+        )
+        Tab(
+            selected = selectedTab == SearchTab.AUDIO,
+            onClick = { onSelectTab(SearchTab.AUDIO) },
+            text = { Text("الصوتيات ($audioCount)") },
+        )
+        Tab(
+            selected = selectedTab == SearchTab.PHOTOS,
+            onClick = { onSelectTab(SearchTab.PHOTOS) },
+            text = { Text("الصور ($photosCount)") },
+        )
+        Tab(
+            selected = selectedTab == SearchTab.VIDEOS,
+            onClick = { onSelectTab(SearchTab.VIDEOS) },
+            text = { Text("الفيديوهات ($videosCount)") },
+        )
+    }
 }
 
 @Composable
@@ -340,6 +522,8 @@ private fun ChatRow(
     photoState: ChatPhotoDownloadState?,
     onClick: () -> Unit,
     onManageFolders: (() -> Unit)?,
+    joinState: JoinState? = null,
+    onJoin: (() -> Unit)? = null,
 ) {
     ListItem(
         headlineContent = { Text(chat.title) },
@@ -363,10 +547,27 @@ private fun ChatRow(
                         Icon(Icons.Filled.CreateNewFolder, contentDescription = "إضافة لمجلد")
                     }
                 }
+                if (onJoin != null) {
+                    JoinButton(state = joinState ?: JoinState.Idle, onClick = onJoin)
+                }
             }
         },
         modifier = Modifier.padding(horizontal = 4.dp).clickable(onClick = onClick),
     )
+}
+
+/** Small trailing action for a search result row — a channel/group the person doesn't already
+ *  have open isn't necessarily "joined" from TDLib's point of view, so this button is what
+ *  actually calls TdApi.JoinChat (see [com.noorconnect.domain.usecase.JoinChatUseCase]),
+ *  independent of tapping the row itself. */
+@Composable
+private fun JoinButton(state: JoinState, onClick: () -> Unit) {
+    when (state) {
+        JoinState.Idle -> TextButton(onClick = onClick) { Text("انضمام") }
+        JoinState.Joining -> CircularProgressIndicator(modifier = Modifier.padding(8.dp), strokeWidth = 2.dp)
+        JoinState.Joined -> Text("تم الانضمام", style = MaterialTheme.typography.labelSmall)
+        JoinState.Failed -> TextButton(onClick = onClick) { Text("إعادة المحاولة") }
+    }
 }
 
 /**
