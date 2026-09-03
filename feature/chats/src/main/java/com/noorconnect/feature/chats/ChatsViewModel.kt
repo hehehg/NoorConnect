@@ -9,6 +9,7 @@ import com.noorconnect.domain.model.SearchResult
 import com.noorconnect.domain.usecase.DownloadFileUseCase
 import com.noorconnect.domain.usecase.GetChatsUseCase
 import com.noorconnect.domain.usecase.GetFileStateUseCase
+import com.noorconnect.domain.usecase.JoinChatUseCase
 import com.noorconnect.domain.usecase.ManageFoldersUseCase
 import com.noorconnect.domain.usecase.ObserveFoldersUseCase
 import com.noorconnect.domain.usecase.SearchUseCase
@@ -33,12 +34,24 @@ sealed class ChatPhotoDownloadState {
     data object Failed : ChatPhotoDownloadState()
 }
 
+/** Which tab of [SearchResult.Found] the search screen is currently showing. */
+enum class SearchTab { CHANNELS, GROUPS, MESSAGES, FILES, AUDIO, PHOTOS, VIDEOS }
+
+/** Per-chat state for a join button on a search result row. */
+sealed class JoinState {
+    data object Idle : JoinState()
+    data object Joining : JoinState()
+    data object Joined : JoinState()
+    data object Failed : JoinState()
+}
+
 @HiltViewModel
 class ChatsViewModel @Inject constructor(
     getChats: GetChatsUseCase,
     observeFolders: ObserveFoldersUseCase,
     private val manageFolders: ManageFoldersUseCase,
     private val search: SearchUseCase,
+    private val joinChat: JoinChatUseCase,
     private val getFileState: GetFileStateUseCase,
     private val downloadFile: DownloadFileUseCase,
 ) : ViewModel() {
@@ -67,6 +80,26 @@ class ChatsViewModel @Inject constructor(
     private val _searchResult = MutableStateFlow<SearchResult?>(null)
     val searchResult: StateFlow<SearchResult?> = _searchResult
 
+    private val _selectedSearchTab = MutableStateFlow(SearchTab.CHANNELS)
+    val selectedSearchTab: StateFlow<SearchTab> = _selectedSearchTab
+
+    private val _joinStates = MutableStateFlow<Map<Long, JoinState>>(emptyMap())
+    val joinStates: StateFlow<Map<Long, JoinState>> = _joinStates
+
+    fun selectSearchTab(tab: SearchTab) {
+        _selectedSearchTab.value = tab
+    }
+
+    fun join(chatId: Long) {
+        if (_joinStates.value[chatId] is JoinState.Joining) return
+        viewModelScope.launch {
+            _joinStates.value += (chatId to JoinState.Joining)
+            val result = joinChat(chatId)
+            val newState = if (result is AppResult.Success) JoinState.Joined else JoinState.Failed
+            _joinStates.value += (chatId to newState)
+        }
+    }
+
     /**
      * Keyed by TDLib file id (chat.photoFileId), NOT chat id — several chats never share a
      * photo id, but keying this way matches the download infra's natural key and means a
@@ -91,10 +124,16 @@ class ChatsViewModel @Inject constructor(
             }
         }
         // Search results carry their own (also already-masked) photoFileIds — cover those too.
+        // Deliberately only photos, not audio/video/document attachments from the other three
+        // media tabs: those can be large, and this repository's downloadFile kdoc is explicit
+        // that a download should only ever be triggered by an explicit tap, not speculatively —
+        // the media tabs' UI is expected to show a tap-to-download placeholder instead.
         viewModelScope.launch {
             _searchResult.collect { result ->
                 val found = result as? SearchResult.Found ?: return@collect
-                found.chats.mapNotNull { it.photoFileId }.distinct().forEach { fileId ->
+                val chatPhotoIds = (found.channels + found.groups).mapNotNull { it.photoFileId }
+                val messagePhotoIds = found.photos.filter { it.isContentVisible }.mapNotNull { it.message.photo?.fileId }
+                (chatPhotoIds + messagePhotoIds).distinct().forEach { fileId ->
                     if (_chatPhotoStates.value.containsKey(fileId)) return@forEach
                     viewModelScope.launch { checkOrDownload(fileId) }
                 }
@@ -111,6 +150,8 @@ class ChatsViewModel @Inject constructor(
         searchJob?.cancel()
         _searchQuery.value = ""
         _searchResult.value = null
+        _selectedSearchTab.value = SearchTab.CHANNELS
+        _joinStates.value = emptyMap()
     }
 
     fun onSearchQueryChange(query: String) {
@@ -151,6 +192,14 @@ class ChatsViewModel @Inject constructor(
 
     fun setChatFolderMembership(folderId: String, chatId: Long, isMember: Boolean) {
         viewModelScope.launch { manageFolders.setChatMembership(folderId, chatId, isMember) }
+    }
+
+    /** Explicit tap-to-download for an audio/video/document attachment in a media search tab —
+     *  see the kdoc on the search-result photo-download collector above for why those aren't
+     *  auto-downloaded on sight the way photos are. */
+    fun downloadAttachment(fileId: Int) {
+        if (_chatPhotoStates.value[fileId] is ChatPhotoDownloadState.Downloading) return
+        viewModelScope.launch { checkOrDownload(fileId) }
     }
 
     private suspend fun checkOrDownload(fileId: Int) {
