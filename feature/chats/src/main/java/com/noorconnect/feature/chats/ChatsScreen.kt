@@ -19,9 +19,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -64,15 +68,20 @@ import kotlin.math.absoluteValue
 fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
     val viewModel: ChatsViewModel = hiltViewModel()
     val chats by viewModel.visibleChats.collectAsStateWithLifecycle()
+    val archivedChats by viewModel.archivedChats.collectAsStateWithLifecycle()
+    val isArchiveExpanded by viewModel.isArchiveExpanded.collectAsStateWithLifecycle()
     val folders by viewModel.folders.collectAsStateWithLifecycle()
     val selectedFolderId by viewModel.selectedFolderId.collectAsStateWithLifecycle()
     val isSearchActive by viewModel.isSearchActive.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val searchResult by viewModel.searchResult.collectAsStateWithLifecycle()
+    val selectedSearchTab by viewModel.selectedSearchTab.collectAsStateWithLifecycle()
     val chatPhotoStates by viewModel.chatPhotoStates.collectAsStateWithLifecycle()
 
     ChatsScreen(
         chats = chats,
+        archivedChats = archivedChats,
+        isArchiveExpanded = isArchiveExpanded,
         folders = folders,
         selectedFolderId = selectedFolderId,
         isSearchActive = isSearchActive,
@@ -89,6 +98,9 @@ fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
         onOpenSearch = viewModel::openSearch,
         onCloseSearch = viewModel::closeSearch,
         onSearchQueryChange = viewModel::onSearchQueryChange,
+        onToggleArchiveSection = viewModel::toggleArchiveSection,
+        onTogglePin = viewModel::togglePin,
+        onToggleArchive = viewModel::toggleArchive,
     )
 }
 
@@ -96,6 +108,8 @@ fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class) // defensive — TopAppBar/FilterChip stability has drifted across BOM versions before
 private fun ChatsScreen(
     chats: List<Chat>,
+    archivedChats: List<Chat>,
+    isArchiveExpanded: Boolean,
     folders: List<ChatFolder>,
     selectedFolderId: String?,
     isSearchActive: Boolean,
@@ -112,10 +126,14 @@ private fun ChatsScreen(
     onOpenSearch: () -> Unit,
     onCloseSearch: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
+    onToggleArchiveSection: () -> Unit,
+    onTogglePin: (Chat) -> Unit,
+    onToggleArchive: (Chat) -> Unit,
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var folderPendingEdit by remember { mutableStateOf<ChatFolder?>(null) }
     var chatPendingFolderPicker by remember { mutableStateOf<Chat?>(null) }
+    var chatPendingActions by remember { mutableStateOf<Chat?>(null) }
 
     Scaffold(
         topBar = {
@@ -142,6 +160,8 @@ private fun ChatsScreen(
                 result = searchResult,
                 chatPhotoStates = chatPhotoStates,
                 onOpenChat = onOpenChat,
+                selectedTab = selectedSearchTab,
+                onSelectTab = viewModel::selectSearchTab,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
         } else {
@@ -155,17 +175,40 @@ private fun ChatsScreen(
                 )
                 HorizontalDivider()
 
-                if (chats.isEmpty()) {
+                if (chats.isEmpty() && archivedChats.isEmpty()) {
                     Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
                         Text("لسه مفيش محادثات هنا")
                     }
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        if (archivedChats.isNotEmpty()) {
+                            item(key = "archive-header") {
+                                ArchivedChatsHeader(
+                                    count = archivedChats.size,
+                                    expanded = isArchiveExpanded,
+                                    onClick = onToggleArchiveSection,
+                                )
+                                HorizontalDivider()
+                            }
+                            if (isArchiveExpanded) {
+                                items(archivedChats, key = { "archived-${it.id}" }) { chat ->
+                                    ChatRow(
+                                        chat = chat,
+                                        photoState = chat.photoFileId?.let { chatPhotoStates[it] },
+                                        onClick = { onOpenChat(chat.id) },
+                                        onLongPress = { chatPendingActions = chat },
+                                        onManageFolders = { chatPendingFolderPicker = chat },
+                                    )
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
                         items(chats, key = { it.id }) { chat ->
                             ChatRow(
                                 chat = chat,
                                 photoState = chat.photoFileId?.let { chatPhotoStates[it] },
                                 onClick = { onOpenChat(chat.id) },
+                                onLongPress = { chatPendingActions = chat },
                                 onManageFolders = { chatPendingFolderPicker = chat },
                             )
                             HorizontalDivider()
@@ -198,6 +241,15 @@ private fun ChatsScreen(
             folders = folders,
             onToggle = { folderId, isMember -> onToggleChatInFolder(folderId, chat.id, isMember) },
             onDismiss = { chatPendingFolderPicker = null },
+        )
+    }
+
+    chatPendingActions?.let { chat ->
+        ChatActionsDialog(
+            chat = chat,
+            onTogglePin = { onTogglePin(chat); chatPendingActions = null },
+            onToggleArchive = { onToggleArchive(chat); chatPendingActions = null },
+            onDismiss = { chatPendingActions = null },
         )
     }
 }
@@ -236,6 +288,8 @@ private fun SearchResultsContent(
     result: SearchResult?,
     chatPhotoStates: Map<Int, ChatPhotoDownloadState>,
     onOpenChat: (Long) -> Unit,
+    selectedTab: SearchTab,
+    onSelectTab: (SearchTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when {
@@ -251,26 +305,72 @@ private fun SearchResultsContent(
         result is SearchResult.Found && result.chats.isEmpty() && result.messages.isEmpty() -> {
             Box(modifier = modifier.padding(24.dp)) { Text("لا توجد نتائج") }
         }
-        result is SearchResult.Found -> LazyColumn(modifier = modifier) {
-            if (result.chats.isNotEmpty()) {
-                item { SectionHeader("القنوات والمجموعات") }
-                items(result.chats, key = { "chat-${it.id}" }) { chat ->
-                    ChatRow(
-                        chat = chat,
-                        photoState = chat.photoFileId?.let { chatPhotoStates[it] },
-                        onClick = { onOpenChat(chat.id) },
-                        onManageFolders = null,
-                    )
-                    HorizontalDivider()
+        result is SearchResult.Found -> Column(modifier = modifier) {
+            SearchTabsRow(
+                selectedTab = selectedTab,
+                chatsCount = result.chats.size,
+                messagesCount = result.messages.size,
+                personalMessagesCount = result.personalMessages.size,
+                onSelectTab = onSelectTab,
+            )
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                when (selectedTab) {
+                    SearchTab.CHATS -> {
+                        items(result.chats, key = { "chat-${it.id}" }) { chat ->
+                            ChatRow(
+                                chat = chat,
+                                photoState = chat.photoFileId?.let { chatPhotoStates[it] },
+                                onClick = { onOpenChat(chat.id) },
+                                onManageFolders = null,
+                            )
+                            HorizontalDivider()
+                        }
+                    }
+                    SearchTab.MESSAGES -> items(result.messages, key = { "msg-${it.message.id}" }) { hit ->
+                        SearchMessageRow(hit = hit, onClick = { onOpenChat(hit.chatId) })
+                        HorizontalDivider()
+                    }
+                    SearchTab.PERSONAL_MESSAGES -> items(result.personalMessages, key = { "pmsg-${it.message.id}" }) { hit ->
+                        SearchMessageRow(hit = hit, onClick = { onOpenChat(hit.chatId) })
+                        HorizontalDivider()
+                    }
                 }
             }
-            if (result.messages.isNotEmpty()) {
-                item { SectionHeader("الرسائل") }
-                items(result.messages, key = { "msg-${it.message.id}" }) { hit ->
-                    SearchMessageRow(hit = hit, onClick = { onOpenChat(hit.chatId) })
-                    HorizontalDivider()
-                }
-            }
+        }
+    }
+}
+
+@Composable
+private fun SearchTabsRow(
+    selectedTab: SearchTab,
+    chatsCount: Int,
+    messagesCount: Int,
+    personalMessagesCount: Int,
+    onSelectTab: (SearchTab) -> Unit,
+) {
+    LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        item {
+            FilterChip(
+                selected = selectedTab == SearchTab.CHATS,
+                onClick = { onSelectTab(SearchTab.CHATS) },
+                label = { Text("المحادثات ($chatsCount)") },
+                modifier = Modifier.padding(end = 6.dp),
+            )
+        }
+        item {
+            FilterChip(
+                selected = selectedTab == SearchTab.MESSAGES,
+                onClick = { onSelectTab(SearchTab.MESSAGES) },
+                label = { Text("الرسائل ($messagesCount)") },
+                modifier = Modifier.padding(end = 6.dp),
+            )
+        }
+        item {
+            FilterChip(
+                selected = selectedTab == SearchTab.PERSONAL_MESSAGES,
+                onClick = { onSelectTab(SearchTab.PERSONAL_MESSAGES) },
+                label = { Text("الرسائل الشخصية ($personalMessagesCount)") },
+            )
         }
     }
 }
@@ -340,9 +440,22 @@ private fun ChatRow(
     photoState: ChatPhotoDownloadState?,
     onClick: () -> Unit,
     onManageFolders: (() -> Unit)?,
+    onLongPress: (() -> Unit)? = null,
 ) {
     ListItem(
-        headlineContent = { Text(chat.title) },
+        headlineContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (chat.isPinned) {
+                    Icon(
+                        Icons.Filled.PushPin,
+                        contentDescription = "محادثة مثبتة",
+                        modifier = Modifier.size(14.dp).padding(end = 4.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Text(chat.title, maxLines = 1)
+            }
+        },
         supportingContent = {
             if (chat.isContentVisible) {
                 chat.lastMessage?.let { Text(it.text, maxLines = 1) }
@@ -364,6 +477,49 @@ private fun ChatRow(
                     }
                 }
             }
+        },
+        modifier = Modifier.padding(horizontal = 4.dp).combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongPress,
+        ),
+    )
+}
+
+@Composable
+private fun ChatActionsDialog(
+    chat: Chat,
+    onTogglePin: () -> Unit,
+    onToggleArchive: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(chat.title) },
+        text = {
+            Column {
+                TextButton(onClick = onTogglePin, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (chat.isPinned) "إلغاء التثبيت" else "تثبيت المحادثة")
+                }
+                TextButton(onClick = onToggleArchive, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (chat.isArchived) "إخراج من الأرشيف" else "أرشفة المحادثة")
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("إغلاق") } },
+    )
+}
+
+@Composable
+private fun ArchivedChatsHeader(count: Int, expanded: Boolean, onClick: () -> Unit) {
+    ListItem(
+        headlineContent = { Text("المحادثات المؤرشفة") },
+        supportingContent = { Text(count.toString()) },
+        leadingContent = { Icon(Icons.Filled.Archive, contentDescription = null) },
+        trailingContent = {
+            Icon(
+                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "طي" else "توسيع",
+            )
         },
         modifier = Modifier.padding(horizontal = 4.dp).clickable(onClick = onClick),
     )

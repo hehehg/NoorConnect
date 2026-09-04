@@ -9,22 +9,41 @@ import org.drinkless.tdlib.TdApi
  * The ONLY place TdApi.Chat/TdApi.Message get turned into our own model.
  * If TDLib's shape changes, this is the one file that needs to change.
  */
-fun TdApi.Chat.toDomain(): Chat = Chat(
+fun TdApi.Chat.toDomain(): Chat {
+    val positions = positions?.filterNotNull().orEmpty()
+    val archived = positions.isInArchiveList()
+    val active = positions.activeChatPosition(archived)
+    return Chat(
     id = id,
     title = title,
     lastMessage = lastMessage?.toDomain(),
     unreadCount = unreadCount,
     isChannel = type is TdApi.ChatTypeSupergroup && (type as TdApi.ChatTypeSupergroup).isChannel,
-    isGroup = type is TdApi.ChatTypeBasicGroup || type is TdApi.ChatTypeSupergroup,
+    isGroup = type is TdApi.ChatTypeBasicGroup ||
+        (type is TdApi.ChatTypeSupergroup && !(type as TdApi.ChatTypeSupergroup).isChannel),
     // photo.small is the low-res version TDLib expects list/avatar UI to use; .big is only for
     // an opened profile view. Deliberately just the file id here, not a download call — see
     // Chat.photoFileId's kdoc for why that belongs in the UI/data layer that owns downloads.
     photoFileId = photo?.small?.id,
+    isPinned = active?.isPinned ?: false,
+    isArchived = archived,
+    order = active?.order ?: 0L,
+    isMember = positions.isNotEmpty(),
     // moderationStatus is intentionally NOT set from TdApi data — it doesn't come from Telegram
     // at all, it comes from our own Firestore backend. Leaving it at Chat's default
     // (Unreviewed) here is correct: GetChatsUseCase overwrites it with the real live value on
     // every emission, so a raw TdApi.Chat.toDomain() is never shown to a screen unfiltered.
-)
+    )
+}
+
+fun List<TdApi.ChatPosition>.isInArchiveList(): Boolean =
+    any { it.list is TdApi.ChatListArchive && it.order != 0L }
+
+fun List<TdApi.ChatPosition>.activeChatPosition(archived: Boolean = isInArchiveList()): TdApi.ChatPosition? {
+    val target = if (archived) firstOrNull { it.list is TdApi.ChatListArchive }
+    else firstOrNull { it.list is TdApi.ChatListMain }
+    return target ?: firstOrNull()
+}
 
 fun TdApi.Message.toDomain(): Message {
     val messageContent = content

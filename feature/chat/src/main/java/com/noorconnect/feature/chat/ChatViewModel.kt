@@ -107,6 +107,9 @@ class ChatViewModel @Inject constructor(
     private val _reportState = MutableStateFlow<ReportState>(ReportState.Idle)
     val reportState: StateFlow<ReportState> = _reportState
 
+    private val _scheduledMessages = MutableStateFlow<List<Message>>(emptyList())
+    val scheduledMessages: StateFlow<List<Message>> = _scheduledMessages
+
     // Tracks which senders we've already asked TDLib about, independent of whether they turned
     // out to have a photo — without this, a sender with NO profile photo would be re-queried on
     // every single message list recomposition instead of just once.
@@ -119,6 +122,13 @@ class ChatViewModel @Inject constructor(
             _accessState.value = when (val result = checkChatAccess(chatId)) {
                 is CheckChatAccessUseCase.Result.Allowed -> ChatAccessState.Allowed
                 is CheckChatAccessUseCase.Result.Denied -> ChatAccessState.Denied(result.reason)
+            }
+        }
+
+        viewModelScope.launch {
+            when (val result = sendMessage.scheduled(chatId)) {
+                is AppResult.Success -> _scheduledMessages.value = result.data
+                else -> Unit
             }
         }
 
@@ -170,9 +180,44 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun send(text: String) {
+    fun send(text: String, scheduleDate: Int? = null) {
         if (text.isBlank()) return
-        viewModelScope.launch { sendMessage(chatId, text) }
+        viewModelScope.launch {
+            sendMessage(chatId, text, scheduleDate)
+            if (scheduleDate != null) refreshScheduled()
+        }
+    }
+
+    fun sendMedia(path: String, mimeType: String, caption: String, scheduleDate: Int? = null) {
+        viewModelScope.launch {
+            sendMessage.media(chatId, path, mimeType, caption, scheduleDate)
+            if (scheduleDate != null) refreshScheduled()
+        }
+    }
+
+    fun edit(messageId: Long, text: String) {
+        viewModelScope.launch { sendMessage.edit(chatId, messageId, text) }
+    }
+
+    fun delete(messageId: Long) {
+        viewModelScope.launch {
+            sendMessage.delete(chatId, messageId)
+            refreshScheduled()
+        }
+    }
+
+    fun sendScheduledNow(messageId: Long) {
+        viewModelScope.launch {
+            sendMessage.sendScheduledNow(chatId, messageId)
+            refreshScheduled()
+        }
+    }
+
+    private suspend fun refreshScheduled() {
+        when (val result = sendMessage.scheduled(chatId)) {
+            is AppResult.Success -> _scheduledMessages.value = result.data
+            else -> Unit
+        }
     }
 
     /** The only entry point ChatScreen calls for a channel/group MESSAGE photo tap — avatars

@@ -1,10 +1,18 @@
 package com.noorconnect.feature.chat
 
 import android.graphics.BitmapFactory
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import java.io.File
+import java.util.Calendar
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,10 +26,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Image as ImageIcon
 import androidx.compose.material3.AlertDialog
@@ -33,6 +44,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -41,10 +53,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +86,7 @@ fun ChatRoute() {
     val chat by viewModel.chat.collectAsStateWithLifecycle()
     val photoStates by viewModel.photoStates.collectAsStateWithLifecycle()
     val reportState by viewModel.reportState.collectAsStateWithLifecycle()
+    val scheduledMessages by viewModel.scheduledMessages.collectAsStateWithLifecycle()
 
     ChatScreen(
         title = chat?.title ?: "محادثة",
@@ -81,7 +96,12 @@ fun ChatRoute() {
         senderPhotoFileIds = senderPhotoFileIds,
         photoStates = photoStates,
         reportState = reportState,
+        scheduledMessages = scheduledMessages,
         onSend = viewModel::send,
+        onSendMedia = viewModel::sendMedia,
+        onEdit = viewModel::edit,
+        onDelete = viewModel::delete,
+            onSendScheduledNow = viewModel::sendScheduledNow,
         onDownloadPhoto = viewModel::downloadPhoto,
         onReport = viewModel::report,
         onDismissReportState = viewModel::dismissReportState,
@@ -98,7 +118,12 @@ private fun ChatScreen(
     senderPhotoFileIds: Map<Long, Int>,
     photoStates: Map<Int, PhotoDownloadState>,
     reportState: ReportState,
-    onSend: (String) -> Unit,
+    scheduledMessages: List<Message>,
+    onSend: (String, Int?) -> Unit,
+    onSendMedia: (String, String, String, Int?) -> Unit,
+    onEdit: (Long, String) -> Unit,
+    onDelete: (Long) -> Unit,
+    onSendScheduledNow: (Long) -> Unit,
     onDownloadPhoto: (Int) -> Unit,
     onReport: (ReportReason, String) -> Unit,
     onDismissReportState: () -> Unit,
@@ -132,7 +157,12 @@ private fun ChatScreen(
                     photoStates = photoStates,
                     draft = draft,
                     onDraftChange = { draft = it },
-                    onSend = { onSend(draft); draft = "" },
+                    scheduledMessages = scheduledMessages,
+                    onSend = { text, scheduleDate -> onSend(text, scheduleDate); draft = "" },
+                    onSendMedia = onSendMedia,
+                    onEdit = onEdit,
+                    onDelete = onDelete,
+                    onSendScheduledNow = onSendScheduledNow,
                     onDownloadPhoto = onDownloadPhoto,
                 )
             }
@@ -174,18 +204,60 @@ private fun DeniedContent(reason: String) {
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun ChatContent(
     messages: List<Message>,
     senderNames: Map<Long, String>,
     senderPhotoFileIds: Map<Long, Int>,
     photoStates: Map<Int, PhotoDownloadState>,
+    scheduledMessages: List<Message>,
     draft: String,
     onDraftChange: (String) -> Unit,
-    onSend: () -> Unit,
+    onSend: (String, Int?) -> Unit,
+    onSendMedia: (String, String, String, Int?) -> Unit,
+    onEdit: (Long, String) -> Unit,
+    onDelete: (Long) -> Unit,
+    onSendScheduledNow: (Long) -> Unit,
     onDownloadPhoto: (Int) -> Unit,
 ) {
+    val context = LocalContext.current
+    var selectedPath by remember { mutableStateOf<String?>(null) }
+    var selectedMimeType by remember { mutableStateOf<String?>(null) }
+    var scheduleDate by remember { mutableStateOf<Int?>(null) }
+    var editingMessage by remember { mutableStateOf<Message?>(null) }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val resolver = context.contentResolver
+        val path = File(context.cacheDir, "upload-${System.currentTimeMillis()}").also { file ->
+            resolver.openInputStream(uri)?.use { input -> file.outputStream().use(input::copyTo) }
+        }
+        selectedPath = path.absolutePath
+        selectedMimeType = resolver.getType(uri) ?: "application/octet-stream"
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) listState.scrollToItem(messages.size - 1)
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp)) {
+        if (scheduledMessages.isNotEmpty()) {
+            Text("الرسائل المجدولة", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(12.dp))
+            scheduledMessages.forEach { scheduled ->
+                ListItem(
+                    headlineContent = { Text(scheduled.text.ifBlank { "مرفق مجدول" }, maxLines = 1) },
+                    trailingContent = {
+                        Row {
+                            TextButton(onClick = { onSendScheduledNow(scheduled.id) }) { Text("إرسال الآن") }
+                            TextButton(onClick = { onDelete(scheduled.id) }) { Text("حذف") }
+                        }
+                    },
+                )
+            }
+        }
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
+        ) {
             items(messages, key = { it.id }) { message ->
                 val avatarFileId = if (message.isOutgoing) null else senderPhotoFileIds[message.senderId]
                 MessageBubble(
@@ -194,20 +266,63 @@ private fun ChatContent(
                     avatarPhotoState = avatarFileId?.let { photoStates[it] },
                     photoState = message.photo?.let { photoStates[it.fileId] } ?: PhotoDownloadState.NotDownloaded,
                     onDownloadPhoto = { message.photo?.let { onDownloadPhoto(it.fileId) } },
+                    onLongPress = { if (message.isOutgoing) editingMessage = message },
                 )
             }
         }
         Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { filePicker.launch(arrayOf("image/*", "video/*", "audio/*", "*/*")) }) {
+                Icon(Icons.Filled.AttachFile, contentDescription = "إرفاق ملف")
+            }
             OutlinedTextField(
                 value = draft,
                 onValueChange = onDraftChange,
                 modifier = Modifier.weight(1f),
                 placeholder = { Text("اكتب رسالة...") },
             )
-            Button(onClick = onSend, modifier = Modifier.padding(start = 8.dp)) {
+            IconButton(onClick = {
+                val now = Calendar.getInstance()
+                DatePickerDialog(context, { _, year, month, day ->
+                    TimePickerDialog(context, { _, hour, minute ->
+                        scheduleDate = Calendar.getInstance().apply {
+                            set(year, month, day, hour, minute, 0)
+                        }.timeInMillis.div(1000).toInt()
+                    }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true).show()
+                }, now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH)).show()
+            }) {
+                Icon(Icons.Filled.CalendarMonth, contentDescription = "جدولة الرسالة")
+            }
+            Button(onClick = {
+                selectedPath?.let { path ->
+                    onSendMedia(path, selectedMimeType ?: "application/octet-stream", draft, scheduleDate)
+                    selectedPath = null
+                    selectedMimeType = null
+                } ?: onSend(draft, scheduleDate)
+                scheduleDate = null
+            }, modifier = Modifier.padding(start = 8.dp)) {
                 Text("إرسال")
             }
         }
+    }
+    editingMessage?.let { message ->
+        var editedText by remember(message.id) { mutableStateOf(message.text) }
+        AlertDialog(
+            onDismissRequest = { editingMessage = null },
+            title = { Text("تعديل الرسالة") },
+            text = { OutlinedTextField(value = editedText, onValueChange = { editedText = it }) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onEdit(message.id, editedText)
+                    editingMessage = null
+                }) { Text("حفظ") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    onDelete(message.id)
+                    editingMessage = null
+                }) { Text("حذف") }
+            },
+        )
     }
 }
 
@@ -228,6 +343,7 @@ private fun MessageBubble(
     avatarPhotoState: PhotoDownloadState?,
     photoState: PhotoDownloadState,
     onDownloadPhoto: () -> Unit,
+    onLongPress: () -> Unit = {},
 ) {
     val avatarColor = colorForId(message.senderId)
     val bubbleColor = if (message.isOutgoing) {
@@ -248,7 +364,10 @@ private fun MessageBubble(
         Surface(
             color = bubbleColor,
             shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.widthIn(max = 280.dp),
+            modifier = Modifier.widthIn(max = 280.dp).combinedClickable(
+                onClick = {},
+                onLongClick = onLongPress,
+            ),
         ) {
             Column(modifier = Modifier.padding(10.dp)) {
                 Text(

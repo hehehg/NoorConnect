@@ -50,8 +50,10 @@ class SearchUseCase @Inject constructor(
 
         val foundChats = (chatRepository.searchPublicChats(trimmed) as? AppResult.Success)?.data.orEmpty()
         val maskedChats = foundChats.mapNotNull { chat -> maskOrDrop(chat, myGender) }
+        val knownChats = chatRepository.observeChats().first().associateBy { it.id }
 
         val foundMessages = (chatRepository.searchMessages(trimmed) as? AppResult.Success)?.data.orEmpty()
+        val foundPersonalMessages = (chatRepository.searchPersonalMessages(trimmed) as? AppResult.Success)?.data.orEmpty()
         val messageResults = foundMessages.mapNotNull { message ->
             // We only have the message here, not its chat's title — SearchUseCase intentionally
             // doesn't re-fetch full Chat objects for every message hit (that's a chat-list-sized
@@ -62,7 +64,9 @@ class SearchUseCase @Inject constructor(
             val status = (record as? AppResult.Success)?.data?.status ?: ChatModerationStatus.Unreviewed
             if (status is ChatModerationStatus.Blacklisted) return@mapNotNull null
 
-            val chatTitle = maskedChats.firstOrNull { it.id == message.chatId }?.title ?: return@mapNotNull null
+            val chatTitle = maskedChats.firstOrNull { it.id == message.chatId }?.title
+                ?: knownChats[message.chatId]?.title
+                ?: return@mapNotNull null
             val isVisible = status is ChatModerationStatus.Whitelisted
             SearchMessageResult(
                 message = message,
@@ -72,7 +76,11 @@ class SearchUseCase @Inject constructor(
             )
         }
 
-        return SearchResult.Found(maskedChats, messageResults)
+        val personalMessageResults = foundPersonalMessages.mapNotNull { message ->
+            messageResults.firstOrNull { it.message.id == message.id }
+        }
+
+        return SearchResult.Found(maskedChats, messageResults, personalMessageResults)
     }
 
     private suspend fun maskOrDrop(chat: Chat, myGender: Gender?): Chat? {

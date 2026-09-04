@@ -2,6 +2,8 @@ package com.noorconnect.data.repository
 
 import com.noorconnect.core.common.AppResult
 import com.noorconnect.core.tdlib.TdLibManager
+import com.noorconnect.data.mapper.activeChatPosition
+import com.noorconnect.data.mapper.isInArchiveList
 import com.noorconnect.data.mapper.toDomain
 import com.noorconnect.domain.model.AuthState
 import com.noorconnect.domain.model.Chat
@@ -49,6 +51,7 @@ class ChatRepositoryImpl @Inject constructor(
     // Keyed by chat id so out-of-order updates (last message vs. read count vs. new chat)
     // always land on the right chat regardless of arrival order.
     private val chatsById = MutableStateFlow<Map<Long, Chat>>(emptyMap())
+    private val chatPositionsById = MutableStateFlow<Map<Long, List<TdApi.ChatPosition>>>(emptyMap())
 
     init {
         scope.launch { collectChatUpdates() }
@@ -60,6 +63,7 @@ class ChatRepositoryImpl @Inject constructor(
             when (update) {
                 is TdApi.UpdateNewChat -> {
                     val chat = update.chat.toDomain()
+                    chatPositionsById.update { it + (chat.id to update.chat.positions?.filterNotNull().orEmpty()) }
                     chatsById.update { it + (chat.id to chat) }
                 }
                 is TdApi.UpdateChatLastMessage -> chatsById.update { map ->
@@ -70,9 +74,41 @@ class ChatRepositoryImpl @Inject constructor(
                     val chat = map[update.chatId] ?: return@update map
                     map + (chat.id to chat.copy(unreadCount = update.unreadCount))
                 }
+                is TdApi.UpdateChatPosition -> applyChatPositionUpdate(update.chatId, update.position)
                 else -> Unit
             }
         }
+    }
+
+    private fun applyChatPositionUpdate(chatId: Long, position: TdApi.ChatPosition) {
+        var updatedPositions: List<TdApi.ChatPosition> = emptyList()
+        chatPositionsById.update { map ->
+            val current = map[chatId].orEmpty()
+            val withoutSameList = current.filterNot { it.list.isSameListKind(position.list) }
+            val next = if (position.order != 0L) withoutSameList + position else withoutSameList
+            updatedPositions = next
+            map + (chatId to next)
+        }
+        chatsById.update { map ->
+            val chat = map[chatId] ?: return@update map
+            val archived = updatedPositions.isInArchiveList()
+            val active = updatedPositions.activeChatPosition(archived)
+            map + (
+                chatId to chat.copy(
+                    isPinned = active?.isPinned ?: false,
+                    isArchived = archived,
+                    order = active?.order ?: 0L,
+                    isMember = updatedPositions.isNotEmpty(),
+                )
+            )
+        }
+    }
+
+    private fun TdApi.ChatList.isSameListKind(other: TdApi.ChatList): Boolean = when {
+        this is TdApi.ChatListMain && other is TdApi.ChatListMain -> true
+        this is TdApi.ChatListArchive && other is TdApi.ChatListArchive -> true
+        this is TdApi.ChatListFolder && other is TdApi.ChatListFolder -> chatFolderId == other.chatFolderId
+        else -> false
     }
 
     /**
@@ -95,7 +131,13 @@ class ChatRepositoryImpl @Inject constructor(
      * TdApi.ChatPosition, so the list is in "first loaded" order rather than "most recent
      * activity" order. Tracked as the next thing to add here, not silently pretended to be done.
      */
-    override fun observeChats(): Flow<List<Chat>> = chatsById.map { it.values.toList() }
+    override fun observeChats(): Flow<List<Chat>> = chatsById.map { byId ->
+        byId.values.sortedWith(
+            compareByDescending<Chat> { it.isPinned }
+                .thenByDescending { it.order }
+                .thenByDescending { it.id },
+        )
+    }
 
     /**
      * Same TDLib pattern as the chat list: opening a chat does NOT retroactively push its
@@ -143,18 +185,84 @@ class ChatRepositoryImpl @Inject constructor(
         )
     }
 
-    override suspend fun sendMessage(chatId: Long, text: String): AppResult<Unit> {
+    override suspend fun sendMessage(chatId: Long, text: String, scheduleDate: Int?): AppResult<Unit> {
         val content = TdApi.InputMessageText(TdApi.FormattedText(text, emptyArray()), null, true)
         // TDLib API note: newer TDLib replaced the old (messageThreadId: Long, replyToMessageId: Long)
         // pair with typed objects (TdApi.MessageTopic?, TdApi.InputMessageReplyTo?) — null means
         // "no thread / not a reply" now, where 0 used to. If you rebuild TDLib later and this
         // breaks again, check TdApi.SendMessage's constructor in the generated TdApi.java first —
         // this is exactly the kind of signature TDLib tends to evolve between versions.
-        val function = TdApi.SendMessage(chatId, null, null, null, null, content)
+        val function = TdApi.SendMessage(chatId, null, null, sendOptions(scheduleDate), null, content)
         return when (val result = tdLib.send(function)) {
             is AppResult.Success -> AppResult.Success(Unit)
             is AppResult.Failure -> result
             is AppResult.Loading -> AppResult.Loading
+        }
+    }
+
+    override suspend fun sendMedia(
+        chatId: Long,
+        path: String,
+        mimeType: String,
+        caption: String,
+        scheduleDate: Int?,
+    ): AppResult<Unit> {
+        val inputFile = TdApi.InputFileLocal(path)
+        val formattedCaption = caption.takeIf { it.isNotBlank() }?.let { TdApi.FormattedText(it, emptyArray()) }
+        val content: TdApi.InputMessageContent = when {
+            mimeType.startsWith("image/") -> TdApi.InputMessagePhoto(
+                TdApi.InputPhoto(inputFile, null, null, null, 0, 0), formattedCaption, false, null, false,
+            )
+            mimeType.startsWith("video/") -> TdApi.InputMessageVideo(
+                TdApi.InputVideo(inputFile, null, null, 0, null, 0, 0, 0, true), formattedCaption, false, null, false,
+            )
+            mimeType.startsWith("audio/") -> TdApi.InputMessageAudio(
+                TdApi.InputAudio(inputFile, null, 0, "", ""), formattedCaption,
+            )
+            else -> TdApi.InputMessageDocument(
+                TdApi.InputDocument(inputFile, null, false), formattedCaption,
+            )
+        }
+        return when (val result = tdLib.send(TdApi.SendMessage(chatId, null, null, sendOptions(scheduleDate), null, content))) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+    }
+
+    override suspend fun getScheduledMessages(chatId: Long): AppResult<List<Message>> =
+        when (val result = tdLib.send(TdApi.GetChatScheduledMessages(chatId))) {
+            is AppResult.Success -> AppResult.Success(result.data.messages?.filterNotNull()?.map { it.toDomain() }.orEmpty())
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+
+    override suspend fun editMessage(chatId: Long, messageId: Long, text: String): AppResult<Unit> {
+        val content = TdApi.InputMessageText(TdApi.FormattedText(text, emptyArray()), null, true)
+        return when (val result = tdLib.send(TdApi.EditMessageText(chatId, messageId, null, content))) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+    }
+
+    override suspend fun deleteMessage(chatId: Long, messageId: Long): AppResult<Unit> =
+        when (val result = tdLib.send(TdApi.DeleteMessages(chatId, longArrayOf(messageId), true))) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+
+    override suspend fun sendScheduledNow(chatId: Long, messageId: Long): AppResult<Unit> =
+        when (val result = tdLib.send(TdApi.EditMessageSchedulingState(chatId, messageId, null))) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+
+    private fun sendOptions(scheduleDate: Int?): TdApi.MessageSendOptions? = scheduleDate?.let {
+        TdApi.MessageSendOptions().apply {
+            schedulingState = TdApi.MessageSchedulingStateSendAtDate(it, 0)
         }
     }
 
@@ -207,6 +315,20 @@ class ChatRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun searchPersonalMessages(query: String): AppResult<List<Message>> {
+        val function = TdApi.SearchMessages(
+            TdApi.ChatListMain(), query, "", MESSAGE_SEARCH_LIMIT, null,
+            TdApi.SearchMessagesChatTypeFilterPrivate(), 0, 0,
+        )
+        return when (val result = tdLib.send(function)) {
+            is AppResult.Success -> AppResult.Success(
+                result.data.messages?.filterNotNull()?.map { it.toDomain() }.orEmpty(),
+            )
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+    }
+
     /** Non-downloading check (TdApi.GetFile) — see the interface kdoc for why this must never
      *  itself trigger a download. */
     override suspend fun getFile(fileId: Int): AppResult<RemoteFile> =
@@ -228,6 +350,28 @@ class ChatRepositoryImpl @Inject constructor(
         val function = TdApi.DownloadFile(fileId, DOWNLOAD_PRIORITY, 0, 0, true)
         return when (val result = tdLib.send(function)) {
             is AppResult.Success -> AppResult.Success(result.data.toRemoteFile())
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+    }
+
+    override suspend fun setChatPinned(chatId: Long, isPinned: Boolean): AppResult<Unit> {
+        val chatList: TdApi.ChatList = if (chatsById.value[chatId]?.isArchived == true) {
+            TdApi.ChatListArchive()
+        } else {
+            TdApi.ChatListMain()
+        }
+        return when (val result = tdLib.send(TdApi.ToggleChatIsPinned(chatList, chatId, isPinned))) {
+            is AppResult.Success -> AppResult.Success(Unit)
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+    }
+
+    override suspend fun setChatArchived(chatId: Long, isArchived: Boolean): AppResult<Unit> {
+        val chatList: TdApi.ChatList = if (isArchived) TdApi.ChatListArchive() else TdApi.ChatListMain()
+        return when (val result = tdLib.send(TdApi.AddChatToList(chatId, chatList))) {
+            is AppResult.Success -> AppResult.Success(Unit)
             is AppResult.Failure -> result
             is AppResult.Loading -> AppResult.Loading
         }

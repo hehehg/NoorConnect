@@ -31,5 +31,6 @@ sealed class SearchResult {
     data class Found(
         val chats: List<Chat>,
         val messages: List<SearchMessageResult>,
+        val personalMessages: List<SearchMessageResult> = emptyList(),
     ) : SearchResult()
 }
