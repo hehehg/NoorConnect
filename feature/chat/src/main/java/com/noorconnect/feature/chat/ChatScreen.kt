@@ -77,6 +77,7 @@ import kotlin.math.absoluteValue
 
 /** Public entry point for :app — reads chatId from the nav back stack via SavedStateHandle. */
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun ChatRoute() {
     val viewModel: ChatViewModel = hiltViewModel()
     val accessState by viewModel.accessState.collectAsStateWithLifecycle()

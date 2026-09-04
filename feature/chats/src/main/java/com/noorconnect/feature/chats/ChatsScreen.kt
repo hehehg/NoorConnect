@@ -98,6 +98,8 @@ fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
         onOpenSearch = viewModel::openSearch,
         onCloseSearch = viewModel::closeSearch,
         onSearchQueryChange = viewModel::onSearchQueryChange,
+        selectedSearchTab = selectedSearchTab,
+        onSelectSearchTab = viewModel::selectSearchTab,
         onToggleArchiveSection = viewModel::toggleArchiveSection,
         onTogglePin = viewModel::togglePin,
         onToggleArchive = viewModel::toggleArchive,
@@ -107,7 +109,7 @@ fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
 }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class) // defensive — TopAppBar/FilterChip stability has drifted across BOM versions before
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class) // defensive — TopAppBar/FilterChip stability has drifted across BOM versions before
 private fun ChatsScreen(
     chats: List<Chat>,
     archivedChats: List<Chat>,
@@ -128,6 +130,8 @@ private fun ChatsScreen(
     onOpenSearch: () -> Unit,
     onCloseSearch: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
+    selectedSearchTab: SearchTab,
+    onSelectSearchTab: (SearchTab) -> Unit,
     onToggleArchiveSection: () -> Unit,
     onTogglePin: (Chat) -> Unit,
     onToggleArchive: (Chat) -> Unit,
