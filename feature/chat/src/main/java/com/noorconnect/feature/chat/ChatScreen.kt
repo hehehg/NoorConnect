@@ -336,6 +336,7 @@ private fun ChatContent(
  * every mainstream chat app (including Telegram itself, even in Arabic) keeps "my
  * messages" on the right regardless of text direction.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
     message: Message,
