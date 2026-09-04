@@ -6,7 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -16,6 +19,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,6 +85,7 @@ private fun PhoneStep(onSubmit: (String) -> Unit) {
     var selectedCountry by remember { mutableStateOf(DefaultCountryCode) }
     var nationalNumber by remember { mutableStateOf("") }
     var countryMenuExpanded by remember { mutableStateOf(false) }
+    var countrySearchQuery by remember { mutableStateOf("") }
 
     Text("رقم التليفون")
 
@@ -88,21 +93,46 @@ private fun PhoneStep(onSubmit: (String) -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Country picker — a fixed-width box, not full ExposedDropdownMenuBox, since we
-        // only need "tap to open a list and pick one", not text-filtering/autocomplete.
         Box {
-            OutlinedButton(onClick = { countryMenuExpanded = true }) {
+            OutlinedButton(
+                onClick = {
+                    countrySearchQuery = ""
+                    countryMenuExpanded = true
+                },
+            ) {
                 Text("${selectedCountry.flag} +${selectedCountry.dialCode}")
             }
-            DropdownMenu(expanded = countryMenuExpanded, onDismissRequest = { countryMenuExpanded = false }) {
-                CountryCodes.forEach { country ->
-                    DropdownMenuItem(
-                        text = { Text("${country.flag} ${country.nameAr} (+${country.dialCode})") },
-                        onClick = {
-                            selectedCountry = country
-                            countryMenuExpanded = false
-                        },
-                    )
+            DropdownMenu(
+                expanded = countryMenuExpanded,
+                onDismissRequest = { countryMenuExpanded = false },
+            ) {
+                TextField(
+                    value = countrySearchQuery,
+                    onValueChange = { countrySearchQuery = it },
+                    placeholder = { Text("ابحث بالاسم أو رمز الدولة") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                )
+                val normalizedSearchQuery = countrySearchQuery
+                    .trim()
+                    .removePrefix("+")
+                    .replace(" ", "")
+                val filteredCountries = CountryCodes.filter { country ->
+                    normalizedSearchQuery.isBlank() ||
+                        country.nameAr.contains(normalizedSearchQuery, ignoreCase = true) ||
+                        country.nameEn.contains(normalizedSearchQuery, ignoreCase = true) ||
+                        country.dialCode.contains(normalizedSearchQuery)
+                }
+                LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                    items(filteredCountries, key = { it.iso }) { country ->
+                        DropdownMenuItem(
+                            text = { Text("${country.flag} ${country.nameAr} (+${country.dialCode})") },
+                            onClick = {
+                                selectedCountry = country
+                                countryMenuExpanded = false
+                            },
+                        )
+                    }
                 }
             }
         }
