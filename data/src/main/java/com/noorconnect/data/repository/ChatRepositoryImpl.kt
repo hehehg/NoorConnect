@@ -7,6 +7,7 @@ import com.noorconnect.data.mapper.isInArchiveList
 import com.noorconnect.data.mapper.toDomain
 import com.noorconnect.domain.model.AuthState
 import com.noorconnect.domain.model.Chat
+import com.noorconnect.domain.model.ChatReviewInfo
 import com.noorconnect.domain.model.Message
 import com.noorconnect.domain.model.RemoteFile
 import com.noorconnect.domain.repository.ChatRepository
@@ -138,6 +139,29 @@ class ChatRepositoryImpl @Inject constructor(
                 .thenByDescending { it.id },
         )
     }
+
+    override suspend fun getChatReviewInfo(chatId: Long): AppResult<ChatReviewInfo> {
+        val chat = when (val result = tdLib.send(TdApi.GetChat(chatId))) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+            is AppResult.Loading -> return AppResult.Loading
+        }
+        val link = if (chat.type is TdApi.ChatTypeSupergroup) {
+            val supergroupId = (chat.type as TdApi.ChatTypeSupergroup).supergroupId
+            when (val result = tdLib.send(TdApi.GetSupergroup(supergroupId))) {
+                is AppResult.Success -> result.data.usernames?.activeUsernames?.firstOrNull()?.let {
+                    "https://t.me/$it"
+                } ?: chat.id.toPrivateChatLink()
+                else -> chat.id.toPrivateChatLink()
+            }
+        } else {
+            null
+        }
+        return AppResult.Success(ChatReviewInfo(title = chat.title, link = link))
+    }
+
+    private fun Long.toPrivateChatLink(): String? =
+        toString().removePrefix("-100").toLongOrNull()?.let { "https://t.me/c/$it" }
 
     /**
      * Same TDLib pattern as the chat list: opening a chat does NOT retroactively push its

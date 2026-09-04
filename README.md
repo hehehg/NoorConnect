@@ -100,6 +100,8 @@ channels/{chatId}
   status:   "whitelist" | "blacklist" | "pending"   # لا وجود لحقل = لم تتم مراجعتها بعد
   reason:   string, اختياري — يُعرض للمستخدم عند الحظر أو المراجعة
   audience: "male" | "female" | "both"               # لا وجود لحقل = "both"
+  title:    string, اسم المحادثة الظاهر في لوحة الإدارة
+  link:     string, رابط المحادثة في Telegram إن أمكن
 
 moderation_config/banned_words
   words: array<string>

@@ -2,12 +2,14 @@ package com.noorconnect.domain.repository
 
 import com.noorconnect.core.common.AppResult
 import com.noorconnect.domain.model.Chat
+import com.noorconnect.domain.model.ChatReviewInfo
 import com.noorconnect.domain.model.Message
 import com.noorconnect.domain.model.RemoteFile
 import kotlinx.coroutines.flow.Flow
 
 interface ChatRepository {
     fun observeChats(): Flow<List<Chat>>
+    suspend fun getChatReviewInfo(chatId: Long): AppResult<ChatReviewInfo>
     fun observeMessages(chatId: Long): Flow<List<Message>>
     suspend fun sendMessage(chatId: Long, text: String, scheduleDate: Int? = null): AppResult<Unit>
     suspend fun sendMedia(
