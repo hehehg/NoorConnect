@@ -2,7 +2,9 @@ package com.noorconnect.data.mapper
 
 import com.noorconnect.domain.model.Chat
 import com.noorconnect.domain.model.Message
+import com.noorconnect.domain.model.MessageMediaType
 import com.noorconnect.domain.model.MessagePhoto
+import com.noorconnect.domain.model.MessageReplyPreview
 import org.drinkless.tdlib.TdApi
 
 /**
@@ -47,30 +49,30 @@ fun List<TdApi.ChatPosition>.activeChatPosition(archived: Boolean = isInArchiveL
 
 fun TdApi.Message.toDomain(): Message {
     val messageContent = content
-    val text = when (messageContent) {
-        is TdApi.MessageText -> messageContent.text.text
-        is TdApi.MessagePhoto -> messageContent.caption?.text.orEmpty()
-        is TdApi.MessageVideo -> messageContent.caption?.text.orEmpty()
-        is TdApi.MessageAudio -> messageContent.caption?.text.orEmpty()
-        is TdApi.MessageVoiceNote -> messageContent.caption?.text.orEmpty()
-        is TdApi.MessageDocument -> messageContent.caption?.text.orEmpty()
+    val text = when (val content = messageContent) {
+        is TdApi.MessageText -> content.text.text
+        is TdApi.MessagePhoto -> content.caption?.text.orEmpty()
+        is TdApi.MessageVideo -> content.caption?.text.orEmpty()
+        is TdApi.MessageAudio -> content.caption?.text.orEmpty()
+        is TdApi.MessageVoiceNote -> content.caption?.text.orEmpty()
+        is TdApi.MessageDocument -> content.caption?.text.orEmpty()
         else -> ""
     }
 
     val replyText = when (val replyTo = replyTo) {
-        is TdApi.MessageReplyToMessage -> when (replyTo.content) {
-            is TdApi.MessageText -> replyTo.content.text.text
-            is TdApi.MessagePhoto -> replyTo.content.caption?.text.orEmpty()
-            is TdApi.MessageVideo -> replyTo.content.caption?.text.orEmpty()
-            is TdApi.MessageAudio -> replyTo.content.caption?.text.orEmpty()
-            is TdApi.MessageVoiceNote -> replyTo.content.caption?.text.orEmpty()
-            is TdApi.MessageDocument -> replyTo.content.caption?.text.orEmpty()
+        is TdApi.MessageReplyToMessage -> when (val replyContent = replyTo.content) {
+            is TdApi.MessageText -> replyContent.text.text
+            is TdApi.MessagePhoto -> replyContent.caption?.text.orEmpty()
+            is TdApi.MessageVideo -> replyContent.caption?.text.orEmpty()
+            is TdApi.MessageAudio -> replyContent.caption?.text.orEmpty()
+            is TdApi.MessageVoiceNote -> replyContent.caption?.text.orEmpty()
+            is TdApi.MessageDocument -> replyContent.caption?.text.orEmpty()
             else -> ""
         }
         else -> null
     }
 
-    val mediaType = when (messageContent) {
+    val mediaType = when (val content = messageContent) {
         is TdApi.MessagePhoto -> MessageMediaType.PHOTO
         is TdApi.MessageVideo -> MessageMediaType.VIDEO
         is TdApi.MessageAudio -> MessageMediaType.AUDIO
