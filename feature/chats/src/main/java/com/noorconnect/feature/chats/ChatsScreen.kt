@@ -103,8 +103,6 @@ fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
         onToggleArchiveSection = viewModel::toggleArchiveSection,
         onTogglePin = viewModel::togglePin,
         onToggleArchive = viewModel::toggleArchive,
-        selectedSearchTab = selectedSearchTab,
-        onSelectSearchTab = viewModel::selectSearchTab,
     )
 }
 
@@ -135,8 +133,6 @@ private fun ChatsScreen(
     onToggleArchiveSection: () -> Unit,
     onTogglePin: (Chat) -> Unit,
     onToggleArchive: (Chat) -> Unit,
-    selectedSearchTab: SearchTab,
-    onSelectSearchTab: (SearchTab) -> Unit,
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var folderPendingEdit by remember { mutableStateOf<ChatFolder?>(null) }
