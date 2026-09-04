@@ -348,9 +348,6 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun AppResult<com.noorconnect.domain.model.RemoteFile>.toPhotoDownloadState(): PhotoDownloadState =
-        when (this) {
-            is AppResult.Success -> data.localPath?.let { PhotoDownloadState.Ready(it) } ?: PhotoDownloadState.Failed
-            else -> PhotoDownloadState.Failed
-        }
+    private fun com.noorconnect.domain.model.RemoteFile.toPhotoDownloadState(): PhotoDownloadState =
+        localPath?.let { PhotoDownloadState.Ready(it) } ?: PhotoDownloadState.Failed
 }
