@@ -77,6 +77,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noorconnect.core.designsystem.NoorColors
 import com.noorconnect.domain.model.Message
+import com.noorconnect.domain.model.MessageMediaType
 import com.noorconnect.domain.model.MessagePhoto
 import com.noorconnect.domain.model.ReportReason
 import kotlin.math.absoluteValue
@@ -446,8 +447,8 @@ private fun MessageBubble(
             Spacer(modifier = Modifier.size(6.dp))
             Box {
                 AvatarCircle(label = senderName, color = avatarColor, photoState = avatarPhotoState, onClick = { expanded = true })
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    if (senderUsername.isNotBlank()) {
+                androidx.compose.material3.DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    if (!senderUsername.isNullOrBlank()) {
                         DropdownMenuItem(
                             text = { Text("مراسلة") },
                             leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
