@@ -2,6 +2,7 @@ package com.noorconnect.feature.chat
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -11,6 +12,7 @@ import java.io.File
 import java.util.Calendar
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -431,12 +433,20 @@ private fun MessageBubble(
                     val filePath = (photoStates[message.mediaFileId] as? PhotoDownloadState.Ready)?.localPath
                     if (filePath != null) {
                         TextButton(onClick = {
-                            val uri = Uri.fromFile(File(filePath))
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, message.mediaMimeType ?: "application/octet-stream")
+                            val uri = FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                File(filePath),
+                            )
+                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                                type = message.mediaMimeType ?: "application/octet-stream"
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
-                            context.startActivity(intent)
+                            try {
+                                context.startActivity(intent)
+                            } catch (_: ActivityNotFoundException) {
+                                Unit
+                            }
                         }) { Text("فتح") }
                     }
                 }

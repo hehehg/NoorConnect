@@ -13,11 +13,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
@@ -29,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noorconnect.domain.model.AuthState
@@ -102,36 +102,41 @@ private fun PhoneStep(onSubmit: (String) -> Unit) {
             ) {
                 Text("${selectedCountry.flag} +${selectedCountry.dialCode}")
             }
-            DropdownMenu(
-                expanded = countryMenuExpanded,
-                onDismissRequest = { countryMenuExpanded = false },
-            ) {
-                TextField(
-                    value = countrySearchQuery,
-                    onValueChange = { countrySearchQuery = it },
-                    placeholder = { Text("ابحث بالاسم أو رمز الدولة") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                )
-                val normalizedSearchQuery = countrySearchQuery
-                    .trim()
-                    .removePrefix("+")
-                    .replace(" ", "")
-                val filteredCountries = CountryCodes.filter { country ->
-                    normalizedSearchQuery.isBlank() ||
-                        country.nameAr.contains(normalizedSearchQuery, ignoreCase = true) ||
-                        country.nameEn.contains(normalizedSearchQuery, ignoreCase = true) ||
-                        country.dialCode.contains(normalizedSearchQuery)
-                }
-                LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
-                    items(filteredCountries, key = { it.iso }) { country ->
-                        DropdownMenuItem(
-                            text = { Text("${country.flag} ${country.nameAr} (+${country.dialCode})") },
-                            onClick = {
-                                selectedCountry = country
-                                countryMenuExpanded = false
-                            },
-                        )
+            if (countryMenuExpanded) {
+                Dialog(onDismissRequest = { countryMenuExpanded = false }) {
+                    Surface {
+                        Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                            TextField(
+                                value = countrySearchQuery,
+                                onValueChange = { countrySearchQuery = it },
+                                placeholder = { Text("ابحث بالاسم أو رمز الدولة") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                            )
+                            val normalizedSearchQuery = countrySearchQuery
+                                .trim()
+                                .removePrefix("+")
+                                .replace(" ", "")
+                            val filteredCountries = CountryCodes.filter { country ->
+                                normalizedSearchQuery.isBlank() ||
+                                    country.nameAr.contains(normalizedSearchQuery, ignoreCase = true) ||
+                                    country.nameEn.contains(normalizedSearchQuery, ignoreCase = true) ||
+                                    country.dialCode.contains(normalizedSearchQuery)
+                            }
+                            LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                                items(filteredCountries, key = { it.iso }) { country ->
+                                    OutlinedButton(
+                                        onClick = {
+                                            selectedCountry = country
+                                            countryMenuExpanded = false
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text("${country.flag} ${country.nameAr} (+${country.dialCode})")
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
