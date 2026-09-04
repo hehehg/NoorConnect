@@ -291,6 +291,15 @@ private fun ChatContent(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        mediaError?.let { error ->
+            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+        }
+        (mediaSendState as? MediaSendState.Failed)?.message?.let { error ->
+            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+        }
+        (messageSendState as? MessageSendState.Failed)?.message?.let { error ->
+            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+        }
         if (scheduledMessages.isNotEmpty()) {
             Text("الرسائل المجدولة", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(12.dp))
             scheduledMessages.forEach { scheduled ->
@@ -417,15 +426,6 @@ private fun MessageBubble(
     val avatarColor = colorForId(message.senderId)
     val bubbleColor = if (message.isOutgoing) {
         MaterialTheme.colorScheme.primaryContainer
-        mediaError?.let { error ->
-            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
-        }
-        (mediaSendState as? MediaSendState.Failed)?.message?.let { error ->
-            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
-        }
-        (messageSendState as? MessageSendState.Failed)?.message?.let { error ->
-            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
-        }
     } else {
         MaterialTheme.colorScheme.surfaceVariant
     }

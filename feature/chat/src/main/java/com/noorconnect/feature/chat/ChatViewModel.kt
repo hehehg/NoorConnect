@@ -284,7 +284,8 @@ class ChatViewModel @Inject constructor(
                     }
                     _photoStates.value += (fileId to file.toPhotoDownloadState())
                 }
-                else -> _photoStates.value += (fileId to result.toPhotoDownloadState())
+                is AppResult.Failure -> _photoStates.value += (fileId to PhotoDownloadState.Failed)
+                is AppResult.Loading -> _photoStates.value += (fileId to PhotoDownloadState.Failed)
             }
         }
     }
