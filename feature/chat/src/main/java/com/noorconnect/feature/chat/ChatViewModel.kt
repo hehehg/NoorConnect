@@ -14,12 +14,15 @@ import com.noorconnect.domain.usecase.GetFileStateUseCase
 import com.noorconnect.domain.usecase.GetMessagesUseCase
 import com.noorconnect.domain.usecase.GetUserDisplayNameUseCase
 import com.noorconnect.domain.usecase.GetUserProfilePhotoUseCase
+import com.noorconnect.domain.usecase.GetUserUsernameUseCase
 import com.noorconnect.domain.usecase.ObserveBannedWordsUseCase
 import com.noorconnect.domain.usecase.ReportChatUseCase
 import com.noorconnect.domain.usecase.ScanMessagesForBannedWordsUseCase
 import com.noorconnect.domain.usecase.SendMessageUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -68,6 +71,7 @@ class ChatViewModel @Inject constructor(
     private val checkChatAccess: CheckChatAccessUseCase,
     private val scanMessagesForBannedWords: ScanMessagesForBannedWordsUseCase,
     private val getUserDisplayName: GetUserDisplayNameUseCase,
+    private val getUserUsername: GetUserUsernameUseCase,
     private val getUserProfilePhoto: GetUserProfilePhotoUseCase,
     private val getFileState: GetFileStateUseCase,
     private val downloadFile: DownloadFileUseCase,
@@ -94,10 +98,17 @@ class ChatViewModel @Inject constructor(
     private val _senderNames = MutableStateFlow<Map<Long, String>>(emptyMap())
     val senderNames: StateFlow<Map<Long, String>> = _senderNames
 
+    // senderId -> public username for profile links / direct-user actions in the avatar menu.
+    private val _senderUsernames = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val senderUsernames: StateFlow<Map<Long, String>> = _senderUsernames
+
     // senderId -> that sender's avatar file id, only present once resolved AND the sender
     // actually has a profile photo (see resolveSender below for the "no photo" case).
     private val _senderPhotoFileIds = MutableStateFlow<Map<Long, Int>>(emptyMap())
     val senderPhotoFileIds: StateFlow<Map<Long, Int>> = _senderPhotoFileIds
+
+    private val _openPrivateChatRequests = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val openPrivateChatRequests: SharedFlow<Long> = _openPrivateChatRequests
 
     // Shared by message-content photos and sender-avatar photos alike — see PhotoDownloadState's
     // kdoc for why one map covers both.
@@ -172,9 +183,9 @@ class ChatViewModel @Inject constructor(
             combine(messages, chat.filterNotNull()) { msgs, currentChat -> msgs to currentChat }
                 .collect { (msgs, currentChat) ->
                     val isChannelOrGroup = currentChat.isChannel || currentChat.isGroup
-                    msgs.mapNotNull { it.photo }.distinctBy { it.fileId }.forEach { photo ->
-                        if (_photoStates.value.containsKey(photo.fileId)) return@forEach
-                        viewModelScope.launch { checkPhotoState(photo.fileId, autoDownload = !isChannelOrGroup) }
+                    msgs.mapNotNull { it.mediaFileId }.distinct().forEach { fileId ->
+                        if (_photoStates.value.containsKey(fileId)) return@forEach
+                        viewModelScope.launch { checkPhotoState(fileId, autoDownload = !isChannelOrGroup) }
                     }
                 }
         }
@@ -231,6 +242,17 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun openPrivateChatWith(userId: Long) {
+        viewModelScope.launch {
+            val result = when (val created = sendMessage.createPrivateChat(userId)) {
+                is AppResult.Success -> created.data
+                is AppResult.Failure -> return@launch
+                is AppResult.Loading -> return@launch
+            }
+            _openPrivateChatRequests.tryEmit(result)
+        }
+    }
+
     fun report(reason: ReportReason, details: String) {
         viewModelScope.launch {
             _reportState.value = ReportState.Submitting
@@ -249,6 +271,11 @@ class ChatViewModel @Inject constructor(
         when (val nameResult = getUserDisplayName(senderId)) {
             is AppResult.Success -> _senderNames.value += (senderId to nameResult.data)
             else -> Unit // leave unresolved — ChatScreen falls back to a generic label
+        }
+
+        when (val usernameResult = getUserUsername(senderId)) {
+            is AppResult.Success -> _senderUsernames.value += (senderId to usernameResult.data.orEmpty())
+            else -> Unit
         }
 
         when (val photoResult = getUserProfilePhoto(senderId)) {

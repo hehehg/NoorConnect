@@ -9,7 +9,7 @@ import org.drinkless.tdlib.TdApi
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private data class CachedUser(val displayName: String, val photoFileId: Int?)
+private data class CachedUser(val displayName: String, val username: String?, val photoFileId: Int?)
 
 /**
  * @Singleton so the cache is shared app-wide, not rebuilt per screen — a user resolved once
@@ -27,6 +27,15 @@ class UserRepositoryImpl @Inject constructor(
         resolve(userId).let { result ->
             when (result) {
                 is AppResult.Success -> AppResult.Success(result.data.displayName)
+                is AppResult.Failure -> result
+                is AppResult.Loading -> AppResult.Loading
+            }
+        }
+
+    override suspend fun getUsername(userId: Long): AppResult<String?> =
+        resolve(userId).let { result ->
+            when (result) {
+                is AppResult.Success -> AppResult.Success(result.data.username)
                 is AppResult.Failure -> result
                 is AppResult.Loading -> AppResult.Loading
             }
@@ -50,9 +59,10 @@ class UserRepositoryImpl @Inject constructor(
                     result.data.firstName.takeIf { it.isNotBlank() },
                     result.data.lastName.takeIf { it.isNotBlank() },
                 ).joinToString(" ").ifBlank { "مستخدم" }
+                val username = result.data.usernames?.activeUsernames?.firstOrNull()
                 // .small is the low-res version, same choice as ChatMapper makes for chat
                 // photos — an avatar never needs the full-resolution .big version.
-                val cached = CachedUser(displayName = name, photoFileId = result.data.profilePhoto?.small?.id)
+                val cached = CachedUser(displayName = name, username = username, photoFileId = result.data.profilePhoto?.small?.id)
                 mutex.withLock { cache[userId] = cached }
                 AppResult.Success(cached)
             }

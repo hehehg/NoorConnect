@@ -10,6 +10,9 @@ class SendMessageUseCase @Inject constructor(
     suspend operator fun invoke(chatId: Long, text: String, scheduleDate: Int? = null): AppResult<Unit> =
         chatRepository.sendMessage(chatId, text, scheduleDate)
 
+    suspend fun createPrivateChat(userId: Long): AppResult<Long> =
+        chatRepository.createPrivateChat(userId)
+
     suspend fun media(
         chatId: Long,
         path: String,

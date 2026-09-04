@@ -8,6 +8,13 @@ interface UserRepository {
     suspend fun getDisplayName(userId: Long): AppResult<String>
 
     /**
+     * Public username used to build the Telegram profile link, or null when the user doesn't have
+     * one configured. Cached alongside the display name and photo because the same GetUser call
+     * resolves all three.
+     */
+    suspend fun getUsername(userId: Long): AppResult<String?>
+
+    /**
      * TDLib file id of the user's small profile photo, or a Success(null) when the user simply
      * has no profile photo set — that's a normal, expected outcome, not a failure. Cached
      * alongside the display name (same TdApi.GetUser call resolves both).

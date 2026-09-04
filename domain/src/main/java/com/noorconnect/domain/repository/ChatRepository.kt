@@ -12,6 +12,7 @@ interface ChatRepository {
     suspend fun getChatReviewInfo(chatId: Long): AppResult<ChatReviewInfo>
     fun observeMessages(chatId: Long): Flow<List<Message>>
     suspend fun sendMessage(chatId: Long, text: String, scheduleDate: Int? = null): AppResult<Unit>
+    suspend fun createPrivateChat(userId: Long): AppResult<Long>
     suspend fun sendMedia(
         chatId: Long,
         path: String,

@@ -224,6 +224,13 @@ class ChatRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun createPrivateChat(userId: Long): AppResult<Long> =
+        when (val result = tdLib.send(TdApi.CreatePrivateChat(userId, false))) {
+            is AppResult.Success -> AppResult.Success(result.data.id)
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+
     override suspend fun sendMedia(
         chatId: Long,
         path: String,

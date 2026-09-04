@@ -1,8 +1,12 @@
 package com.noorconnect.feature.chat
 
-import android.graphics.BitmapFactory
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Environment
+import android.provider.MediaStore
 import java.io.File
 import java.util.Calendar
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -34,6 +38,8 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Image as ImageIcon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -83,6 +89,7 @@ fun ChatRoute() {
     val accessState by viewModel.accessState.collectAsStateWithLifecycle()
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val senderNames by viewModel.senderNames.collectAsStateWithLifecycle()
+    val senderUsernames by viewModel.senderUsernames.collectAsStateWithLifecycle()
     val senderPhotoFileIds by viewModel.senderPhotoFileIds.collectAsStateWithLifecycle()
     val chat by viewModel.chat.collectAsStateWithLifecycle()
     val photoStates by viewModel.photoStates.collectAsStateWithLifecycle()
@@ -94,6 +101,7 @@ fun ChatRoute() {
         accessState = accessState,
         messages = messages,
         senderNames = senderNames,
+        senderUsernames = senderUsernames,
         senderPhotoFileIds = senderPhotoFileIds,
         photoStates = photoStates,
         reportState = reportState,
@@ -102,7 +110,7 @@ fun ChatRoute() {
         onSendMedia = viewModel::sendMedia,
         onEdit = viewModel::edit,
         onDelete = viewModel::delete,
-            onSendScheduledNow = viewModel::sendScheduledNow,
+        onSendScheduledNow = viewModel::sendScheduledNow,
         onDownloadPhoto = viewModel::downloadPhoto,
         onReport = viewModel::report,
         onDismissReportState = viewModel::dismissReportState,
@@ -116,6 +124,7 @@ private fun ChatScreen(
     accessState: ChatAccessState,
     messages: List<Message>,
     senderNames: Map<Long, String>,
+    senderUsernames: Map<Long, String>,
     senderPhotoFileIds: Map<Long, Int>,
     photoStates: Map<Int, PhotoDownloadState>,
     reportState: ReportState,
@@ -154,6 +163,7 @@ private fun ChatScreen(
                 ChatAccessState.Allowed -> ChatContent(
                     messages = messages,
                     senderNames = senderNames,
+                    senderUsernames = senderUsernames,
                     senderPhotoFileIds = senderPhotoFileIds,
                     photoStates = photoStates,
                     draft = draft,
@@ -209,6 +219,7 @@ private fun DeniedContent(reason: String) {
 private fun ChatContent(
     messages: List<Message>,
     senderNames: Map<Long, String>,
+    senderUsernames: Map<Long, String>,
     senderPhotoFileIds: Map<Long, Int>,
     photoStates: Map<Int, PhotoDownloadState>,
     scheduledMessages: List<Message>,
@@ -264,8 +275,10 @@ private fun ChatContent(
                 MessageBubble(
                     message = message,
                     senderName = if (message.isOutgoing) "أنت" else senderNames[message.senderId] ?: "...",
+                    senderUsername = if (message.isOutgoing) null else senderUsernames[message.senderId],
                     avatarPhotoState = avatarFileId?.let { photoStates[it] },
                     photoState = message.photo?.let { photoStates[it.fileId] } ?: PhotoDownloadState.NotDownloaded,
+                    photoStates = photoStates,
                     onDownloadPhoto = { message.photo?.let { onDownloadPhoto(it.fileId) } },
                     onLongPress = { if (message.isOutgoing) editingMessage = message },
                 )
@@ -342,8 +355,10 @@ private fun ChatContent(
 private fun MessageBubble(
     message: Message,
     senderName: String,
+    senderUsername: String?,
     avatarPhotoState: PhotoDownloadState?,
     photoState: PhotoDownloadState,
+    photoStates: Map<Int, PhotoDownloadState>,
     onDownloadPhoto: () -> Unit,
     onLongPress: () -> Unit = {},
 ) {
@@ -353,13 +368,15 @@ private fun MessageBubble(
     } else {
         MaterialTheme.colorScheme.surfaceVariant
     }
+    val context = LocalContext.current
+    var expanded by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = if (message.isOutgoing) Arrangement.Start else Arrangement.End,
     ) {
         if (message.isOutgoing) {
-            AvatarCircle(label = senderName, color = avatarColor, photoState = avatarPhotoState)
+            AvatarCircle(label = senderName, color = avatarColor, photoState = avatarPhotoState, onClick = {})
             Spacer(modifier = Modifier.size(6.dp))
         }
 
@@ -372,23 +389,83 @@ private fun MessageBubble(
             ),
         ) {
             Column(modifier = Modifier.padding(10.dp)) {
-                Text(
-                    senderName,
-                    color = avatarColor,
-                    style = MaterialTheme.typography.labelMedium,
-                )
+                Text(senderName, color = avatarColor, style = MaterialTheme.typography.labelMedium)
+
+                message.replyTo?.let { reply ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp),
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                            Text(text = reply.senderName ?: "إجابة", style = MaterialTheme.typography.labelSmall, color = avatarColor)
+                            Text(text = reply.text.ifBlank { "محتوى" }, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                        }
+                    }
+                }
+
                 message.photo?.let { photo ->
                     Spacer(modifier = Modifier.size(4.dp))
                     MessagePhotoContent(photo = photo, state = photoState, onDownload = onDownloadPhoto)
                     if (message.text.isNotBlank()) Spacer(modifier = Modifier.size(4.dp))
                 }
                 if (message.text.isNotBlank()) Text(message.text)
+                if (message.mediaType != MessageMediaType.TEXT && message.mediaFileId != null && message.mediaMimeType != null) {
+                    Spacer(modifier = Modifier.size(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.SaveAlt, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.size(4.dp))
+                        Text(
+                            text = message.mediaName ?: when (message.mediaType) {
+                                MessageMediaType.PHOTO -> "صورة"
+                                MessageMediaType.VIDEO -> "فيديو"
+                                MessageMediaType.AUDIO -> "مقطع صوتي"
+                                MessageMediaType.VOICE -> "رسالة صوتية"
+                                MessageMediaType.DOCUMENT -> "ملف"
+                                else -> "وسائط"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    val filePath = (photoStates[message.mediaFileId] as? PhotoDownloadState.Ready)?.localPath
+                    if (filePath != null) {
+                        TextButton(onClick = {
+                            val uri = Uri.fromFile(File(filePath))
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, message.mediaMimeType ?: "application/octet-stream")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(intent)
+                        }) { Text("فتح") }
+                    }
+                }
             }
         }
 
         if (!message.isOutgoing) {
             Spacer(modifier = Modifier.size(6.dp))
-            AvatarCircle(label = senderName, color = avatarColor, photoState = avatarPhotoState)
+            Box {
+                AvatarCircle(label = senderName, color = avatarColor, photoState = avatarPhotoState, onClick = { expanded = true })
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    if (senderUsername.isNotBlank()) {
+                        DropdownMenuItem(
+                            text = { Text("مراسلة") },
+                            leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
+                            onClick = { expanded = false },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("نسخ رابط الملف الشخصي") },
+                            leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
+                            onClick = {
+                                expanded = false
+                                val profileUrl = "https://t.me/$senderUsername"
+                                val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                                clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("profile", profileUrl))
+                            },
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -399,9 +476,17 @@ private fun MessageBubble(
  * on failure, or for the person's own messages (no self-lookup is done, see ChatViewModel).
  */
 @Composable
-private fun AvatarCircle(label: String, color: Color, photoState: PhotoDownloadState?) {
+private fun AvatarCircle(
+    label: String,
+    color: Color,
+    photoState: PhotoDownloadState?,
+    onClick: () -> Unit = {},
+) {
     Box(
-        modifier = Modifier.size(36.dp).background(color = color, shape = CircleShape),
+        modifier = Modifier
+            .size(36.dp)
+            .background(color = color, shape = CircleShape)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         val readyPath = (photoState as? PhotoDownloadState.Ready)?.localPath
