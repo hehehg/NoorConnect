@@ -378,7 +378,7 @@ class ChatRepositoryImpl @Inject constructor(
      * higher = more urgent) — nothing here needs to jump the queue.
      */
     override suspend fun downloadFile(fileId: Int): AppResult<RemoteFile> {
-        val function = TdApi.DownloadFile(fileId, DOWNLOAD_PRIORITY, 0, 0, true)
+        val function = TdApi.DownloadFile(fileId, DOWNLOAD_PRIORITY, 0, 0, false)
         return when (val result = tdLib.send(function)) {
             is AppResult.Success -> AppResult.Success(result.data.toRemoteFile())
             is AppResult.Failure -> result
@@ -412,6 +412,8 @@ class ChatRepositoryImpl @Inject constructor(
         fileId = id,
         localPath = local?.path?.takeIf { it.isNotBlank() },
         isDownloaded = local?.isDownloadingCompleted ?: false,
+        downloadedSize = local?.downloadedSize ?: 0L,
+        expectedSize = expectedSize.takeIf { it > 0 } ?: size,
     )
 
     companion object {

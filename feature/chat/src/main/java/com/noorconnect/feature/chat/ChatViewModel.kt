@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -50,7 +51,7 @@ sealed class PhotoDownloadState {
     /** Not checked yet, or checked and confirmed not on disk — in a channel/group message
      *  photo this is the state the UI renders as a "tap to download" placeholder. */
     data object NotDownloaded : PhotoDownloadState()
-    data object Downloading : PhotoDownloadState()
+    data class Downloading(val progress: Int? = null) : PhotoDownloadState()
     data class Ready(val localPath: String) : PhotoDownloadState()
     data object Failed : PhotoDownloadState()
 }
@@ -60,6 +61,17 @@ sealed class ReportState {
     data object Submitting : ReportState()
     data object Submitted : ReportState()
     data object Failed : ReportState()
+}
+
+sealed class MediaSendState {
+    data object Idle : MediaSendState()
+    data object Sending : MediaSendState()
+    data class Failed(val message: String) : MediaSendState()
+}
+
+sealed class MessageSendState {
+    data object Idle : MessageSendState()
+    data class Failed(val message: String) : MessageSendState()
 }
 
 @HiltViewModel
@@ -114,6 +126,12 @@ class ChatViewModel @Inject constructor(
     // kdoc for why one map covers both.
     private val _photoStates = MutableStateFlow<Map<Int, PhotoDownloadState>>(emptyMap())
     val photoStates: StateFlow<Map<Int, PhotoDownloadState>> = _photoStates
+
+    private val _mediaSendState = MutableStateFlow<MediaSendState>(MediaSendState.Idle)
+    val mediaSendState: StateFlow<MediaSendState> = _mediaSendState
+
+    private val _messageSendState = MutableStateFlow<MessageSendState>(MessageSendState.Idle)
+    val messageSendState: StateFlow<MessageSendState> = _messageSendState
 
     private val _reportState = MutableStateFlow<ReportState>(ReportState.Idle)
     val reportState: StateFlow<ReportState> = _reportState
@@ -194,15 +212,28 @@ class ChatViewModel @Inject constructor(
     fun send(text: String, scheduleDate: Int? = null) {
         if (text.isBlank()) return
         viewModelScope.launch {
-            sendMessage(chatId, text, scheduleDate)
-            if (scheduleDate != null) refreshScheduled()
+            when (val result = sendMessage(chatId, text, scheduleDate)) {
+                is AppResult.Success -> {
+                    _messageSendState.value = MessageSendState.Idle
+                    if (scheduleDate != null) refreshScheduled()
+                }
+                is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
+                is AppResult.Loading -> Unit
+            }
         }
     }
 
     fun sendMedia(path: String, mimeType: String, caption: String, scheduleDate: Int? = null) {
         viewModelScope.launch {
-            sendMessage.media(chatId, path, mimeType, caption, scheduleDate)
-            if (scheduleDate != null) refreshScheduled()
+            _mediaSendState.value = MediaSendState.Sending
+            when (val result = sendMessage.media(chatId, path, mimeType, caption, scheduleDate)) {
+                is AppResult.Success -> {
+                    _mediaSendState.value = MediaSendState.Idle
+                    if (scheduleDate != null) refreshScheduled()
+                }
+                is AppResult.Failure -> _mediaSendState.value = MediaSendState.Failed(result.message)
+                is AppResult.Loading -> _mediaSendState.value = MediaSendState.Sending
+            }
         }
     }
 
@@ -235,10 +266,26 @@ class ChatViewModel @Inject constructor(
      *  never go through a tap, they're always auto-downloaded (see the init block above). */
     fun downloadPhoto(fileId: Int) {
         if (_photoStates.value[fileId] is PhotoDownloadState.Downloading) return
-        _photoStates.value += (fileId to PhotoDownloadState.Downloading)
+        _photoStates.value += (fileId to PhotoDownloadState.Downloading())
         viewModelScope.launch {
-            val result = downloadFile(fileId)
-            _photoStates.value += (fileId to result.toPhotoDownloadState())
+            when (val result = downloadFile(fileId)) {
+                is AppResult.Success -> {
+                    var file = result.data
+                    while (!file.isDownloaded) {
+                        val progress = file.expectedSize.takeIf { it > 0 }?.let {
+                            ((file.downloadedSize * 100) / it).toInt().coerceIn(0, 99)
+                        }
+                        _photoStates.value += (fileId to PhotoDownloadState.Downloading(progress))
+                        delay(250)
+                        file = when (val state = getFileState(fileId)) {
+                            is AppResult.Success -> state.data
+                            else -> break
+                        }
+                    }
+                    _photoStates.value += (fileId to file.toPhotoDownloadState())
+                }
+                else -> _photoStates.value += (fileId to result.toPhotoDownloadState())
+            }
         }
     }
 

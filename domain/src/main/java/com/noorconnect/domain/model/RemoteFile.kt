@@ -10,4 +10,6 @@ data class RemoteFile(
     val fileId: Int,
     val localPath: String?,
     val isDownloaded: Boolean,
+    val downloadedSize: Long = 0L,
+    val expectedSize: Long = 0L,
 )

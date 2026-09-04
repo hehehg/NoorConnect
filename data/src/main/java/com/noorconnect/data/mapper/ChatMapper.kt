@@ -31,6 +31,10 @@ fun TdApi.Chat.toDomain(): Chat {
     isArchived = archived,
     order = active?.order ?: 0L,
     isMember = positions.isNotEmpty(),
+        canSendMessages = permissions?.canSendBasicMessages ?: true,
+        sendRestrictionReason = permissions?.takeUnless { it.canSendBasicMessages }?.let {
+            "إرسال الرسائل مقتصر على المشرفين أو غير متاح لك في هذه المحادثة"
+        },
     // moderationStatus is intentionally NOT set from TdApi data — it doesn't come from Telegram
     // at all, it comes from our own Firestore backend. Leaving it at Chat's default
     // (Unreviewed) here is correct: GetChatsUseCase overwrites it with the real live value on
@@ -56,7 +60,9 @@ fun TdApi.Message.toDomain(): Message {
         is TdApi.MessageAudio -> content.caption?.text.orEmpty()
         is TdApi.MessageVoiceNote -> content.caption?.text.orEmpty()
         is TdApi.MessageDocument -> content.caption?.text.orEmpty()
-        else -> ""
+        is TdApi.MessageAnimation -> content.caption?.text.orEmpty()
+        is TdApi.MessagePinMessage -> "تم تثبيت رسالة"
+        else -> "رسالة غير مدعومة"
     }
 
     val replyText = when (val replyTo = replyTo) {
@@ -67,7 +73,9 @@ fun TdApi.Message.toDomain(): Message {
             is TdApi.MessageAudio -> replyContent.caption?.text.orEmpty()
             is TdApi.MessageVoiceNote -> replyContent.caption?.text.orEmpty()
             is TdApi.MessageDocument -> replyContent.caption?.text.orEmpty()
-            else -> ""
+            is TdApi.MessageAnimation -> replyContent.caption?.text.orEmpty()
+            is TdApi.MessagePinMessage -> "تم تثبيت رسالة"
+            else -> "رسالة غير مدعومة"
         }
         else -> null
     }
@@ -78,7 +86,10 @@ fun TdApi.Message.toDomain(): Message {
         is TdApi.MessageAudio -> MessageMediaType.AUDIO
         is TdApi.MessageVoiceNote -> MessageMediaType.VOICE
         is TdApi.MessageDocument -> MessageMediaType.DOCUMENT
-        else -> MessageMediaType.TEXT
+        is TdApi.MessageAnimation -> MessageMediaType.VIDEO
+        is TdApi.MessageSticker -> MessageMediaType.UNKNOWN
+        is TdApi.MessageVideoNote -> MessageMediaType.VIDEO
+        else -> MessageMediaType.UNKNOWN
     }
 
     return Message(
@@ -96,21 +107,30 @@ fun TdApi.Message.toDomain(): Message {
                 ?.maxByOrNull { it.width }
                 ?.photo?.id
             is TdApi.MessageVideo -> messageContent.video?.video?.id
+            is TdApi.MessageAnimation -> messageContent.animation?.animation?.id
             is TdApi.MessageAudio -> messageContent.audio?.audio?.id
             is TdApi.MessageVoiceNote -> messageContent.voiceNote?.voice?.id
             is TdApi.MessageDocument -> messageContent.document?.document?.id
+            is TdApi.MessageSticker -> messageContent.sticker?.sticker?.id
+            is TdApi.MessageVideoNote -> messageContent.videoNote?.video?.id
             else -> null
         },
         mediaMimeType = when (messageContent) {
+            is TdApi.MessageAnimation -> messageContent.animation?.mimeType
             is TdApi.MessageVideo -> messageContent.video?.mimeType
             is TdApi.MessageAudio -> messageContent.audio?.mimeType
             is TdApi.MessageVoiceNote -> messageContent.voiceNote?.mimeType
             is TdApi.MessageDocument -> messageContent.document?.mimeType
+            is TdApi.MessageSticker -> "image/webp"
+            is TdApi.MessageVideoNote -> "video/mp4"
             else -> null
         },
         mediaName = when (messageContent) {
+            is TdApi.MessageAnimation -> messageContent.animation?.fileName
             is TdApi.MessageDocument -> messageContent.document?.fileName
             is TdApi.MessageAudio -> messageContent.audio?.fileName
+            is TdApi.MessageSticker -> "ملصق"
+            is TdApi.MessageVideoNote -> "فيديو دائري"
             else -> null
         },
         // Largest available size — TDLib returns PhotoSize entries smallest-first, so the last

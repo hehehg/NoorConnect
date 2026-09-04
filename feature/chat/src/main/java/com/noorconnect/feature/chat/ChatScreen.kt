@@ -87,7 +87,7 @@ import kotlin.math.absoluteValue
 /** Public entry point for :app — reads chatId from the nav back stack via SavedStateHandle. */
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-fun ChatRoute() {
+fun ChatRoute(onOpenChat: (Long) -> Unit = {}) {
     val viewModel: ChatViewModel = hiltViewModel()
     val accessState by viewModel.accessState.collectAsStateWithLifecycle()
     val messages by viewModel.messages.collectAsStateWithLifecycle()
@@ -96,6 +96,8 @@ fun ChatRoute() {
     val senderPhotoFileIds by viewModel.senderPhotoFileIds.collectAsStateWithLifecycle()
     val chat by viewModel.chat.collectAsStateWithLifecycle()
     val photoStates by viewModel.photoStates.collectAsStateWithLifecycle()
+    val mediaSendState by viewModel.mediaSendState.collectAsStateWithLifecycle()
+    val messageSendState by viewModel.messageSendState.collectAsStateWithLifecycle()
     val reportState by viewModel.reportState.collectAsStateWithLifecycle()
     val scheduledMessages by viewModel.scheduledMessages.collectAsStateWithLifecycle()
 
@@ -107,6 +109,10 @@ fun ChatRoute() {
         senderUsernames = senderUsernames,
         senderPhotoFileIds = senderPhotoFileIds,
         photoStates = photoStates,
+        mediaSendState = mediaSendState,
+        messageSendState = messageSendState,
+        canSendMessages = chat?.canSendMessages ?: true,
+        sendRestrictionReason = chat?.sendRestrictionReason,
         reportState = reportState,
         scheduledMessages = scheduledMessages,
         onSend = viewModel::send,
@@ -115,9 +121,13 @@ fun ChatRoute() {
         onDelete = viewModel::delete,
         onSendScheduledNow = viewModel::sendScheduledNow,
         onDownloadPhoto = viewModel::downloadPhoto,
+        onOpenPrivateChat = viewModel::openPrivateChatWith,
         onReport = viewModel::report,
         onDismissReportState = viewModel::dismissReportState,
     )
+    LaunchedEffect(Unit) {
+        viewModel.openPrivateChatRequests.collect { onOpenChat(it) }
+    }
 }
 
 @Composable
@@ -130,6 +140,10 @@ private fun ChatScreen(
     senderUsernames: Map<Long, String>,
     senderPhotoFileIds: Map<Long, Int>,
     photoStates: Map<Int, PhotoDownloadState>,
+    mediaSendState: MediaSendState,
+    messageSendState: MessageSendState,
+    canSendMessages: Boolean,
+    sendRestrictionReason: String?,
     reportState: ReportState,
     scheduledMessages: List<Message>,
     onSend: (String, Int?) -> Unit,
@@ -138,6 +152,7 @@ private fun ChatScreen(
     onDelete: (Long) -> Unit,
     onSendScheduledNow: (Long) -> Unit,
     onDownloadPhoto: (Int) -> Unit,
+    onOpenPrivateChat: (Long) -> Unit,
     onReport: (ReportReason, String) -> Unit,
     onDismissReportState: () -> Unit,
 ) {
@@ -169,6 +184,10 @@ private fun ChatScreen(
                     senderUsernames = senderUsernames,
                     senderPhotoFileIds = senderPhotoFileIds,
                     photoStates = photoStates,
+                    mediaSendState = mediaSendState,
+                    messageSendState = messageSendState,
+                    canSendMessages = canSendMessages,
+                    sendRestrictionReason = sendRestrictionReason,
                     draft = draft,
                     onDraftChange = { draft = it },
                     scheduledMessages = scheduledMessages,
@@ -178,6 +197,7 @@ private fun ChatScreen(
                     onDelete = onDelete,
                     onSendScheduledNow = onSendScheduledNow,
                     onDownloadPhoto = onDownloadPhoto,
+                    onOpenPrivateChat = onOpenPrivateChat,
                 )
             }
         }
@@ -225,6 +245,10 @@ private fun ChatContent(
     senderUsernames: Map<Long, String>,
     senderPhotoFileIds: Map<Long, Int>,
     photoStates: Map<Int, PhotoDownloadState>,
+    mediaSendState: MediaSendState,
+    messageSendState: MessageSendState,
+    canSendMessages: Boolean,
+    sendRestrictionReason: String?,
     scheduledMessages: List<Message>,
     draft: String,
     onDraftChange: (String) -> Unit,
@@ -234,20 +258,32 @@ private fun ChatContent(
     onDelete: (Long) -> Unit,
     onSendScheduledNow: (Long) -> Unit,
     onDownloadPhoto: (Int) -> Unit,
+    onOpenPrivateChat: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     var selectedPath by remember { mutableStateOf<String?>(null) }
     var selectedMimeType by remember { mutableStateOf<String?>(null) }
+    var mediaError by remember { mutableStateOf<String?>(null) }
     var scheduleDate by remember { mutableStateOf<Int?>(null) }
     var editingMessage by remember { mutableStateOf<Message?>(null) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         val resolver = context.contentResolver
-        val path = File(context.cacheDir, "upload-${System.currentTimeMillis()}").also { file ->
-            resolver.openInputStream(uri)?.use { input -> file.outputStream().use(input::copyTo) }
+        val path = File.createTempFile("upload-", ".bin", context.cacheDir)
+        val copied = runCatching {
+            resolver.openInputStream(uri)?.use { input ->
+                path.outputStream().use { output -> input.copyTo(output) }
+            } ?: error("تعذر فتح الوسائط المختارة")
+            check(path.length() > 0) { "الوسائط المختارة فارغة" }
         }
-        selectedPath = path.absolutePath
-        selectedMimeType = resolver.getType(uri) ?: "application/octet-stream"
+        if (copied.isSuccess) {
+            selectedPath = path.absolutePath
+            selectedMimeType = resolver.getType(uri) ?: "application/octet-stream"
+            mediaError = null
+        } else {
+            path.delete()
+            mediaError = copied.exceptionOrNull()?.message ?: "تعذر تجهيز الوسائط"
+        }
     }
     val listState = rememberLazyListState()
     LaunchedEffect(messages.size) {
@@ -283,42 +319,53 @@ private fun ChatContent(
                     photoState = message.photo?.let { photoStates[it.fileId] } ?: PhotoDownloadState.NotDownloaded,
                     photoStates = photoStates,
                     onDownloadPhoto = { message.photo?.let { onDownloadPhoto(it.fileId) } },
+                    onDownloadMedia = { message.mediaFileId?.let(onDownloadPhoto) },
+                    onOpenPrivateChat = onOpenPrivateChat,
                     onLongPress = { if (message.isOutgoing) editingMessage = message },
                 )
             }
         }
-        Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { filePicker.launch(arrayOf("image/*", "video/*", "audio/*", "*/*")) }) {
-                Icon(Icons.Filled.AttachFile, contentDescription = "إرفاق ملف")
+        if (canSendMessages) {
+            Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { filePicker.launch(arrayOf("image/*", "video/*", "audio/*", "*/*")) }) {
+                    Icon(Icons.Filled.AttachFile, contentDescription = "إرفاق ملف")
+                }
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("اكتب رسالة...") },
+                )
+                IconButton(onClick = {
+                    val now = Calendar.getInstance()
+                    DatePickerDialog(context, { _, year, month, day ->
+                        TimePickerDialog(context, { _, hour, minute ->
+                            scheduleDate = Calendar.getInstance().apply {
+                                set(year, month, day, hour, minute, 0)
+                            }.timeInMillis.div(1000).toInt()
+                        }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true).show()
+                    }, now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH)).show()
+                }) {
+                    Icon(Icons.Filled.CalendarMonth, contentDescription = "جدولة الرسالة")
+                }
+                Button(onClick = {
+                    selectedPath?.let { path ->
+                        onSendMedia(path, selectedMimeType ?: "application/octet-stream", draft, scheduleDate)
+                        selectedPath = null
+                        selectedMimeType = null
+                    } ?: onSend(draft, scheduleDate)
+                    scheduleDate = null
+                }, modifier = Modifier.padding(start = 8.dp)) {
+                    Text("إرسال")
+                }
             }
-            OutlinedTextField(
-                value = draft,
-                onValueChange = onDraftChange,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("اكتب رسالة...") },
+        } else {
+            Text(
+                sendRestrictionReason ?: "لا يمكنك إرسال الرسائل في هذه المحادثة",
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                textAlign = TextAlign.Center,
             )
-            IconButton(onClick = {
-                val now = Calendar.getInstance()
-                DatePickerDialog(context, { _, year, month, day ->
-                    TimePickerDialog(context, { _, hour, minute ->
-                        scheduleDate = Calendar.getInstance().apply {
-                            set(year, month, day, hour, minute, 0)
-                        }.timeInMillis.div(1000).toInt()
-                    }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true).show()
-                }, now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH)).show()
-            }) {
-                Icon(Icons.Filled.CalendarMonth, contentDescription = "جدولة الرسالة")
-            }
-            Button(onClick = {
-                selectedPath?.let { path ->
-                    onSendMedia(path, selectedMimeType ?: "application/octet-stream", draft, scheduleDate)
-                    selectedPath = null
-                    selectedMimeType = null
-                } ?: onSend(draft, scheduleDate)
-                scheduleDate = null
-            }, modifier = Modifier.padding(start = 8.dp)) {
-                Text("إرسال")
-            }
         }
     }
     editingMessage?.let { message ->
@@ -363,11 +410,22 @@ private fun MessageBubble(
     photoState: PhotoDownloadState,
     photoStates: Map<Int, PhotoDownloadState>,
     onDownloadPhoto: () -> Unit,
+    onDownloadMedia: () -> Unit,
+    onOpenPrivateChat: (Long) -> Unit,
     onLongPress: () -> Unit = {},
 ) {
     val avatarColor = colorForId(message.senderId)
     val bubbleColor = if (message.isOutgoing) {
         MaterialTheme.colorScheme.primaryContainer
+        mediaError?.let { error ->
+            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+        }
+        (mediaSendState as? MediaSendState.Failed)?.message?.let { error ->
+            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+        }
+        (messageSendState as? MessageSendState.Failed)?.message?.let { error ->
+            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+        }
     } else {
         MaterialTheme.colorScheme.surfaceVariant
     }
@@ -431,7 +489,16 @@ private fun MessageBubble(
                         )
                     }
                     val filePath = (photoStates[message.mediaFileId] as? PhotoDownloadState.Ready)?.localPath
-                    if (filePath != null) {
+                    when (val state = photoStates[message.mediaFileId]) {
+                        is PhotoDownloadState.Downloading -> {
+                            Text(
+                                state.progress?.let { "تحميل $it%" } ?: "جار التحميل...",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        else -> if (filePath == null) {
+                            TextButton(onClick = onDownloadMedia) { Text("تحميل") }
+                        } else {
                         TextButton(onClick = {
                             val uri = FileProvider.getUriForFile(
                                 context,
@@ -448,6 +515,7 @@ private fun MessageBubble(
                                 Unit
                             }
                         }) { Text("فتح") }
+                        }
                     }
                 }
             }
@@ -458,12 +526,15 @@ private fun MessageBubble(
             Box {
                 AvatarCircle(label = senderName, color = avatarColor, photoState = avatarPhotoState, onClick = { expanded = true })
                 androidx.compose.material3.DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text("مراسلة") },
+                        leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
+                        onClick = {
+                            expanded = false
+                            onOpenPrivateChat(message.senderId)
+                        },
+                    )
                     if (!senderUsername.isNullOrBlank()) {
-                        DropdownMenuItem(
-                            text = { Text("مراسلة") },
-                            leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
-                            onClick = { expanded = false },
-                        )
                         DropdownMenuItem(
                             text = { Text("نسخ رابط الملف الشخصي") },
                             leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
@@ -551,10 +622,15 @@ private fun MessagePhotoContent(photo: MessagePhoto, state: PhotoDownloadState, 
                 PhotoPlaceholder(aspectRatio = aspectRatio, icon = Icons.Filled.ImageIcon, label = "تعذّر عرض الصورة")
             }
         }
-        PhotoDownloadState.Downloading -> Box(
+        is PhotoDownloadState.Downloading -> Box(
             modifier = Modifier.fillMaxWidth().aspectRatio(aspectRatio),
             contentAlignment = Alignment.Center,
-        ) { CircularProgressIndicator() }
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                state.progress?.let { Text("تحميل $it%") }
+            }
+        }
 
         PhotoDownloadState.NotDownloaded -> PhotoPlaceholder(
             aspectRatio = aspectRatio,
