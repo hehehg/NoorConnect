@@ -126,6 +126,7 @@ fun TdApi.Message.toDomain(): Message {
             else -> null
         },
         mediaName = when (messageContent) {
+            is TdApi.MessageVideo -> messageContent.video?.fileName
             is TdApi.MessageAnimation -> messageContent.animation?.fileName
             is TdApi.MessageDocument -> messageContent.document?.fileName
             is TdApi.MessageAudio -> messageContent.audio?.fileName

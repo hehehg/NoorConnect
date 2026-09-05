@@ -2,12 +2,15 @@ package com.noorconnect.feature.chat
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.ContentResolver
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
 import java.io.File
 import java.util.Calendar
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -83,6 +86,20 @@ import com.noorconnect.domain.model.MessageMediaType
 import com.noorconnect.domain.model.MessagePhoto
 import com.noorconnect.domain.model.ReportReason
 import kotlin.math.absoluteValue
+
+private fun ContentResolver.displayName(uri: Uri): String? =
+    query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) cursor.getString(0) else null
+    }
+
+private fun uploadSuffix(fileName: String?, mimeType: String): String {
+    val originalExtension = fileName
+        ?.substringAfterLast('.', "")
+        ?.takeIf { it.isNotBlank() && it.length <= 10 }
+    val extension = originalExtension
+        ?: MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
+    return extension?.let { ".${it.lowercase()}" } ?: ".bin"
+}
 
 /** Public entry point for :app — reads chatId from the nav back stack via SavedStateHandle. */
 @Composable
@@ -263,13 +280,21 @@ private fun ChatContent(
     val context = LocalContext.current
     var selectedPath by remember { mutableStateOf<String?>(null) }
     var selectedMimeType by remember { mutableStateOf<String?>(null) }
+    var selectedFileName by remember { mutableStateOf<String?>(null) }
+    var pendingSavePath by remember { mutableStateOf<String?>(null) }
     var mediaError by remember { mutableStateOf<String?>(null) }
     var scheduleDate by remember { mutableStateOf<Int?>(null) }
     var editingMessage by remember { mutableStateOf<Message?>(null) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         val resolver = context.contentResolver
-        val path = File.createTempFile("upload-", ".bin", context.cacheDir)
+        val originalName = resolver.displayName(uri)
+        val mimeType = resolver.getType(uri)
+            ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(
+                originalName?.substringAfterLast('.', "")?.lowercase(),
+            )
+            ?: "application/octet-stream"
+        val path = File.createTempFile("upload-", uploadSuffix(originalName, mimeType), context.cacheDir)
         val copied = runCatching {
             resolver.openInputStream(uri)?.use { input ->
                 path.outputStream().use { output -> input.copyTo(output) }
@@ -278,12 +303,24 @@ private fun ChatContent(
         }
         if (copied.isSuccess) {
             selectedPath = path.absolutePath
-            selectedMimeType = resolver.getType(uri) ?: "application/octet-stream"
+            selectedMimeType = mimeType
+            selectedFileName = originalName ?: path.name
             mediaError = null
         } else {
             path.delete()
             mediaError = copied.exceptionOrNull()?.message ?: "تعذر تجهيز الوسائط"
         }
+    }
+    val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        val sourcePath = pendingSavePath
+        if (uri != null && sourcePath != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    File(sourcePath).inputStream().use { input -> input.copyTo(output) }
+                } ?: error("تعذر فتح مكان الحفظ")
+            }.onFailure { mediaError = it.message ?: "تعذر حفظ الوسائط" }
+        }
+        pendingSavePath = null
     }
     val listState = rememberLazyListState()
     LaunchedEffect(messages.size) {
@@ -314,6 +351,9 @@ private fun ChatContent(
                 )
             }
         }
+        selectedFileName?.let { name ->
+            Text("تم اختيار الوسائط: $name", modifier = Modifier.padding(horizontal = 12.dp))
+        }
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
@@ -329,8 +369,11 @@ private fun ChatContent(
                     photoStates = photoStates,
                     onDownloadPhoto = { message.photo?.let { onDownloadPhoto(it.fileId) } },
                     onDownloadMedia = { message.mediaFileId?.let(onDownloadPhoto) },
+                    onSaveMedia = { path, name ->
+                        pendingSavePath = path
+                        saveFile.launch(name)
+                    },
                     onOpenPrivateChat = onOpenPrivateChat,
-                    onLongPress = { if (message.isOutgoing) editingMessage = message },
                 )
             }
         }
@@ -360,8 +403,10 @@ private fun ChatContent(
                 Button(onClick = {
                     selectedPath?.let { path ->
                         onSendMedia(path, selectedMimeType ?: "application/octet-stream", draft, scheduleDate)
+                        onDraftChange("")
                         selectedPath = null
                         selectedMimeType = null
+                        selectedFileName = null
                     } ?: onSend(draft, scheduleDate)
                     scheduleDate = null
                 }, modifier = Modifier.padding(start = 8.dp)) {
@@ -420,6 +465,7 @@ private fun MessageBubble(
     photoStates: Map<Int, PhotoDownloadState>,
     onDownloadPhoto: () -> Unit,
     onDownloadMedia: () -> Unit,
+    onSaveMedia: (String, String) -> Unit,
     onOpenPrivateChat: (Long) -> Unit,
     onLongPress: () -> Unit = {},
 ) {
@@ -468,6 +514,11 @@ private fun MessageBubble(
                 message.photo?.let { photo ->
                     Spacer(modifier = Modifier.size(4.dp))
                     MessagePhotoContent(photo = photo, state = photoState, onDownload = onDownloadPhoto)
+                    (photoState as? PhotoDownloadState.Ready)?.let { ready ->
+                        TextButton(onClick = { onSaveMedia(ready.localPath, "photo.jpg") }) {
+                            Text("حفظ على الجهاز")
+                        }
+                    }
                     if (message.text.isNotBlank()) Spacer(modifier = Modifier.size(4.dp))
                 }
                 if (message.text.isNotBlank()) Text(message.text)
@@ -508,6 +559,7 @@ private fun MessageBubble(
                             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                                 type = message.mediaMimeType ?: "application/octet-stream"
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                clipData = android.content.ClipData.newRawUri("media", uri)
                             }
                             try {
                                 context.startActivity(intent)
@@ -515,6 +567,9 @@ private fun MessageBubble(
                                 Unit
                             }
                         }) { Text("فتح") }
+                        TextButton(onClick = {
+                            onSaveMedia(filePath, message.mediaName ?: "وسائط")
+                        }) { Text("حفظ على الجهاز") }
                         }
                     }
                 }

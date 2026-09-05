@@ -204,7 +204,11 @@ class ChatRepositoryImpl @Inject constructor(
                 .filterIsInstance<TdApi.UpdateNewMessage>()
                 .map { it.message.toDomain() }
                 .runningFold(initial) { acc, message ->
-                    if (message.chatId == chatId) acc + message else acc
+                    if (message.chatId == chatId && acc.none { it.id == message.id }) {
+                        acc + message
+                    } else {
+                        acc
+                    }
                 },
         )
     }
