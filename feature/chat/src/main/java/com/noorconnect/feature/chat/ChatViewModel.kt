@@ -10,6 +10,7 @@ import com.noorconnect.domain.model.ReportReason
 import com.noorconnect.domain.usecase.CheckChatAccessUseCase
 import com.noorconnect.domain.usecase.DownloadFileUseCase
 import com.noorconnect.domain.usecase.GetChatByIdUseCase
+import com.noorconnect.domain.usecase.GetChatSendPermissionUseCase
 import com.noorconnect.domain.usecase.GetFileStateUseCase
 import com.noorconnect.domain.usecase.GetMessagesUseCase
 import com.noorconnect.domain.usecase.GetUserDisplayNameUseCase
@@ -80,6 +81,7 @@ class ChatViewModel @Inject constructor(
     getMessages: GetMessagesUseCase,
     getChatById: GetChatByIdUseCase,
     private val sendMessage: SendMessageUseCase,
+    private val getChatSendPermission: GetChatSendPermissionUseCase,
     private val checkChatAccess: CheckChatAccessUseCase,
     private val scanMessagesForBannedWords: ScanMessagesForBannedWordsUseCase,
     private val getUserDisplayName: GetUserDisplayNameUseCase,
@@ -139,6 +141,9 @@ class ChatViewModel @Inject constructor(
     private val _scheduledMessages = MutableStateFlow<List<Message>>(emptyList())
     val scheduledMessages: StateFlow<List<Message>> = _scheduledMessages
 
+    private val _sendPermission = MutableStateFlow<com.noorconnect.domain.model.ChatSendPermission?>(null)
+    val sendPermission: StateFlow<com.noorconnect.domain.model.ChatSendPermission?> = _sendPermission
+
     // Tracks which senders we've already asked TDLib about, independent of whether they turned
     // out to have a photo — without this, a sender with NO profile photo would be re-queried on
     // every single message list recomposition instead of just once.
@@ -151,6 +156,13 @@ class ChatViewModel @Inject constructor(
             _accessState.value = when (val result = checkChatAccess(chatId)) {
                 is CheckChatAccessUseCase.Result.Allowed -> ChatAccessState.Allowed
                 is CheckChatAccessUseCase.Result.Denied -> ChatAccessState.Denied(result.reason)
+            }
+        }
+
+        viewModelScope.launch {
+            when (val result = getChatSendPermission(chatId)) {
+                is AppResult.Success -> _sendPermission.value = result.data
+                else -> Unit
             }
         }
 
@@ -238,20 +250,36 @@ class ChatViewModel @Inject constructor(
     }
 
     fun edit(messageId: Long, text: String) {
-        viewModelScope.launch { sendMessage.edit(chatId, messageId, text) }
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            when (val result = sendMessage.edit(chatId, messageId, text)) {
+                is AppResult.Success -> {
+                    _messageSendState.value = MessageSendState.Idle
+                    refreshScheduled()
+                }
+                is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
+                is AppResult.Loading -> Unit
+            }
+        }
     }
 
     fun delete(messageId: Long) {
         viewModelScope.launch {
-            sendMessage.delete(chatId, messageId)
-            refreshScheduled()
+            when (val result = sendMessage.delete(chatId, messageId)) {
+                is AppResult.Success -> refreshScheduled()
+                is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
+                is AppResult.Loading -> Unit
+            }
         }
     }
 
     fun sendScheduledNow(messageId: Long) {
         viewModelScope.launch {
-            sendMessage.sendScheduledNow(chatId, messageId)
-            refreshScheduled()
+            when (val result = sendMessage.sendScheduledNow(chatId, messageId)) {
+                is AppResult.Success -> refreshScheduled()
+                is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
+                is AppResult.Loading -> Unit
+            }
         }
     }
 

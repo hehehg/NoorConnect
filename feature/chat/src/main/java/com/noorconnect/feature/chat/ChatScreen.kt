@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -44,6 +45,9 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Image as ImageIcon
 import androidx.compose.material3.AlertDialog
@@ -117,6 +121,7 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}) {
     val messageSendState by viewModel.messageSendState.collectAsStateWithLifecycle()
     val reportState by viewModel.reportState.collectAsStateWithLifecycle()
     val scheduledMessages by viewModel.scheduledMessages.collectAsStateWithLifecycle()
+    val sendPermission by viewModel.sendPermission.collectAsStateWithLifecycle()
 
     ChatScreen(
         title = chat?.title ?: "محادثة",
@@ -128,8 +133,8 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}) {
         photoStates = photoStates,
         mediaSendState = mediaSendState,
         messageSendState = messageSendState,
-        canSendMessages = chat?.canSendMessages ?: true,
-        sendRestrictionReason = chat?.sendRestrictionReason,
+        canSendMessages = sendPermission?.canSend ?: chat?.canSendMessages ?: true,
+        sendRestrictionReason = sendPermission?.reason ?: chat?.sendRestrictionReason,
         reportState = reportState,
         scheduledMessages = scheduledMessages,
         onSend = viewModel::send,
@@ -285,6 +290,7 @@ private fun ChatContent(
     var mediaError by remember { mutableStateOf<String?>(null) }
     var scheduleDate by remember { mutableStateOf<Int?>(null) }
     var editingMessage by remember { mutableStateOf<Message?>(null) }
+    var scheduledExpanded by remember { mutableStateOf(false) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         val resolver = context.contentResolver
@@ -338,17 +344,51 @@ private fun ChatContent(
             Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
         }
         if (scheduledMessages.isNotEmpty()) {
-            Text("الرسائل المجدولة", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(12.dp))
-            scheduledMessages.forEach { scheduled ->
-                ListItem(
-                    headlineContent = { Text(scheduled.text.ifBlank { "مرفق مجدول" }, maxLines = 1) },
-                    trailingContent = {
-                        Row {
-                            TextButton(onClick = { onSendScheduledNow(scheduled.id) }) { Text("إرسال الآن") }
-                            TextButton(onClick = { onDelete(scheduled.id) }) { Text("حذف") }
+            val orderedScheduledMessages = scheduledMessages.sortedBy { it.timestamp }
+            Surface(
+                tonalElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            ) {
+                Column {
+                    ListItem(
+                        leadingContent = { Icon(Icons.Filled.PushPin, contentDescription = "الرسائل المجدولة") },
+                        headlineContent = { Text("الرسائل المجدولة (${orderedScheduledMessages.size})") },
+                        supportingContent = {
+                            Text(
+                                orderedScheduledMessages.first().text.ifBlank { "مرفق مجدول" },
+                                maxLines = 1,
+                            )
+                        },
+                        trailingContent = {
+                            IconButton(onClick = { scheduledExpanded = !scheduledExpanded }) {
+                                Icon(
+                                    if (scheduledExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                    contentDescription = if (scheduledExpanded) "طي الرسائل المجدولة" else "عرض الرسائل المجدولة",
+                                )
+                            }
+                        },
+                    )
+                    if (scheduledExpanded) {
+                        LazyColumn(modifier = Modifier.heightIn(max = 240.dp)) {
+                            items(orderedScheduledMessages, key = { it.id }) { scheduled ->
+                                ListItem(
+                                    headlineContent = {
+                                        Text(scheduled.text.ifBlank { "مرفق مجدول" }, maxLines = 1)
+                                    },
+                                    trailingContent = {
+                                        Row {
+                                            TextButton(onClick = { onSendScheduledNow(scheduled.id) }) {
+                                                Text("إرسال الآن")
+                                            }
+                                            TextButton(onClick = { editingMessage = scheduled }) { Text("تعديل") }
+                                            TextButton(onClick = { onDelete(scheduled.id) }) { Text("حذف") }
+                                        }
+                                    },
+                                )
+                            }
                         }
-                    },
-                )
+                    }
+                }
             }
         }
         selectedFileName?.let { name ->

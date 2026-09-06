@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -36,6 +38,19 @@ fun SettingsRoute() {
         settings = settings,
         onAllowUnverifiedChannelsChange = viewModel::setAllowUnverifiedChannels,
         onAllowGroupsChange = viewModel::setAllowGroups,
+        onNotificationsEnabledChange = viewModel::setNotificationsEnabled,
+        onNotificationPreviewChange = viewModel::setNotificationPreview,
+        onNotificationSoundChange = viewModel::setNotificationSound,
+        onNotificationVibrationChange = viewModel::setNotificationVibration,
+        onInAppSoundsChange = viewModel::setInAppSounds,
+        onAutoDownloadPhotosChange = viewModel::setAutoDownloadPhotos,
+        onAutoDownloadVideosChange = viewModel::setAutoDownloadVideos,
+        onAutoDownloadFilesChange = viewModel::setAutoDownloadFiles,
+        onSaveToGalleryChange = viewModel::setSaveToGallery,
+        onAutoplayVideosChange = viewModel::setAutoplayVideos,
+        onAutoplayGifsChange = viewModel::setAutoplayGifs,
+        onSendByEnterChange = viewModel::setSendByEnter,
+        onReduceDataUsageChange = viewModel::setReduceDataUsage,
         onAddKeyword = viewModel::addBlockedKeyword,
         onRemoveKeyword = viewModel::removeBlockedKeyword,
     )
@@ -46,12 +61,47 @@ private fun SettingsScreen(
     settings: ModerationSettings,
     onAllowUnverifiedChannelsChange: (Boolean) -> Unit,
     onAllowGroupsChange: (Boolean) -> Unit,
+    onNotificationsEnabledChange: (Boolean) -> Unit,
+    onNotificationPreviewChange: (Boolean) -> Unit,
+    onNotificationSoundChange: (Boolean) -> Unit,
+    onNotificationVibrationChange: (Boolean) -> Unit,
+    onInAppSoundsChange: (Boolean) -> Unit,
+    onAutoDownloadPhotosChange: (Boolean) -> Unit,
+    onAutoDownloadVideosChange: (Boolean) -> Unit,
+    onAutoDownloadFilesChange: (Boolean) -> Unit,
+    onSaveToGalleryChange: (Boolean) -> Unit,
+    onAutoplayVideosChange: (Boolean) -> Unit,
+    onAutoplayGifsChange: (Boolean) -> Unit,
+    onSendByEnterChange: (Boolean) -> Unit,
+    onReduceDataUsageChange: (Boolean) -> Unit,
     onAddKeyword: (String) -> Unit,
     onRemoveKeyword: (String) -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        Text("إعدادات الفلترة", style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+    ) {
+        Text("الإعدادات", style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
 
+        SettingsSection("الإشعارات")
+        SettingRow("الإشعارات", settings.notificationsEnabled, onNotificationsEnabledChange)
+        SettingRow("معاينة نص الرسالة", settings.notificationPreview, onNotificationPreviewChange)
+        SettingRow("صوت الإشعارات", settings.notificationSound, onNotificationSoundChange)
+        SettingRow("اهتزاز الإشعارات", settings.notificationVibration, onNotificationVibrationChange)
+        SettingRow("أصوات التطبيق", settings.inAppSounds, onInAppSoundsChange)
+
+        SettingsSection("البيانات والتخزين")
+        SettingRow("تنزيل الصور تلقائيًا", settings.autoDownloadPhotos, onAutoDownloadPhotosChange)
+        SettingRow("تنزيل الفيديوهات تلقائيًا", settings.autoDownloadVideos, onAutoDownloadVideosChange)
+        SettingRow("تنزيل الملفات تلقائيًا", settings.autoDownloadFiles, onAutoDownloadFilesChange)
+        SettingRow("حفظ الوسائط في المعرض", settings.saveToGallery, onSaveToGalleryChange)
+        SettingRow("استخدام بيانات أقل", settings.reduceDataUsage, onReduceDataUsageChange)
+
+        SettingsSection("المحادثات والوسائط")
+        SettingRow("التشغيل التلقائي للفيديو", settings.autoplayVideos, onAutoplayVideosChange)
+        SettingRow("التشغيل التلقائي للصور المتحركة", settings.autoplayGifs, onAutoplayGifsChange)
+        SettingRow("الإرسال بزر Enter", settings.sendByEnter, onSendByEnterChange)
+
+        SettingsSection("الفلترة والمحتوى")
         SettingRow(
             title = "السماح بالقنوات غير الموثّقة",
             checked = settings.allowUnverifiedChannels,
@@ -66,6 +116,15 @@ private fun SettingsScreen(
         Text("كلمات محظورة", modifier = Modifier.padding(top = 24.dp, bottom = 8.dp))
         KeywordEditor(keywords = settings.blockedKeywords, onAdd = onAddKeyword, onRemove = onRemoveKeyword)
     }
+}
+
+@Composable
+private fun SettingsSection(title: String) {
+    Text(
+        text = title,
+        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(top = 24.dp, bottom = 4.dp),
+    )
 }
 
 @Composable

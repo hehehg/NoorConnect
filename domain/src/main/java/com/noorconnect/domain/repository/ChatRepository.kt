@@ -3,6 +3,7 @@ package com.noorconnect.domain.repository
 import com.noorconnect.core.common.AppResult
 import com.noorconnect.domain.model.Chat
 import com.noorconnect.domain.model.ChatReviewInfo
+import com.noorconnect.domain.model.ChatSendPermission
 import com.noorconnect.domain.model.Message
 import com.noorconnect.domain.model.RemoteFile
 import kotlinx.coroutines.flow.Flow
@@ -21,6 +22,7 @@ interface ChatRepository {
         scheduleDate: Int? = null,
     ): AppResult<Unit>
     suspend fun getScheduledMessages(chatId: Long): AppResult<List<Message>>
+    suspend fun getChatSendPermission(chatId: Long): AppResult<ChatSendPermission>
     suspend fun editMessage(chatId: Long, messageId: Long, text: String): AppResult<Unit>
     suspend fun deleteMessage(chatId: Long, messageId: Long): AppResult<Unit>
     suspend fun sendScheduledNow(chatId: Long, messageId: Long): AppResult<Unit>

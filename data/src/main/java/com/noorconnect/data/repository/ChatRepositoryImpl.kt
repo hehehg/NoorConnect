@@ -8,6 +8,7 @@ import com.noorconnect.data.mapper.toDomain
 import com.noorconnect.domain.model.AuthState
 import com.noorconnect.domain.model.Chat
 import com.noorconnect.domain.model.ChatReviewInfo
+import com.noorconnect.domain.model.ChatSendPermission
 import com.noorconnect.domain.model.Message
 import com.noorconnect.domain.model.RemoteFile
 import com.noorconnect.domain.repository.ChatRepository
@@ -271,6 +272,42 @@ class ChatRepositoryImpl @Inject constructor(
             is AppResult.Failure -> result
             is AppResult.Loading -> AppResult.Loading
         }
+
+    override suspend fun getChatSendPermission(chatId: Long): AppResult<ChatSendPermission> {
+        val chat = when (val result = tdLib.send(TdApi.GetChat(chatId))) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+            is AppResult.Loading -> return AppResult.Loading
+        }
+        val defaultPermission = ChatSendPermission(
+            canSend = chat.permissions?.canSendBasicMessages ?: true,
+            reason = chat.permissions?.takeUnless { it.canSendBasicMessages }?.let {
+                "لا يسمح إعداد هذه المحادثة بإرسال الرسائل لهذا الحساب"
+            },
+        )
+        if (chat.type !is TdApi.ChatTypeSupergroup) return AppResult.Success(defaultPermission)
+
+        val myId = when (val result = tdLib.send(TdApi.GetOption("my_id"))) {
+            is AppResult.Success -> (result.data as? TdApi.OptionValueInteger)?.value?.toLong()
+            else -> null
+        } ?: return AppResult.Success(defaultPermission)
+
+        val member = when (val result = tdLib.send(TdApi.GetChatMember(chatId, TdApi.MessageSenderUser(myId)))) {
+            is AppResult.Success -> result.data
+            else -> return AppResult.Success(defaultPermission)
+        }
+        val isChannel = (chat.type as TdApi.ChatTypeSupergroup).isChannel
+        val isAdminWithPostingRights = when (val status = member.status) {
+            is TdApi.ChatMemberStatusCreator -> true
+            is TdApi.ChatMemberStatusAdministrator -> !isChannel || status.rights?.canPostMessages == true
+            else -> false
+        }
+        return if (isAdminWithPostingRights) {
+            AppResult.Success(ChatSendPermission(canSend = true))
+        } else {
+            AppResult.Success(defaultPermission)
+        }
+    }
 
     override suspend fun editMessage(chatId: Long, messageId: Long, text: String): AppResult<Unit> {
         val content = TdApi.InputMessageText(TdApi.FormattedText(text, emptyArray()), null, true)
