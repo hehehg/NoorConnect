@@ -8,8 +8,10 @@ import com.noorconnect.domain.model.Gender
 import com.noorconnect.domain.model.SearchMessageResult
 import com.noorconnect.domain.model.SearchResult
 import com.noorconnect.domain.moderation.BannedWordMatcher
+import com.noorconnect.domain.moderation.ContentFilter
 import com.noorconnect.domain.repository.ChatModerationRepository
 import com.noorconnect.domain.repository.ChatRepository
+import com.noorconnect.domain.repository.ModerationSettingsRepository
 import com.noorconnect.domain.repository.UserPreferencesRepository
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -38,6 +40,8 @@ class SearchUseCase @Inject constructor(
     private val chatRepository: ChatRepository,
     private val moderationRepository: ChatModerationRepository,
     private val userPreferencesRepository: UserPreferencesRepository,
+    private val moderationSettingsRepository: ModerationSettingsRepository,
+    private val contentFilter: ContentFilter,
 ) {
     suspend operator fun invoke(query: String): SearchResult {
         val trimmed = query.trim()
@@ -47,14 +51,28 @@ class SearchUseCase @Inject constructor(
         if (BannedWordMatcher.containsAny(trimmed, bannedWords)) return SearchResult.QueryBlocked
 
         val myGender = userPreferencesRepository.observeOnboardingState().first().gender
+        val settings = moderationSettingsRepository.observeSettings().first()
 
-        val foundChats = (chatRepository.searchPublicChats(trimmed) as? AppResult.Success)?.data.orEmpty()
-        val maskedChats = foundChats.mapNotNull { chat -> maskOrDrop(chat, myGender) }
+        // Telegram searches known chats first (offline), then searches public chats on the
+        // server. Keep that order and deduplicate chats returned by both TDLib calls.
+        val knownSearchChats = (chatRepository.searchKnownChats(trimmed) as? AppResult.Success)?.data.orEmpty()
+        val serverSearchChats = (chatRepository.searchChatsOnServer(trimmed) as? AppResult.Success)?.data.orEmpty()
+        val publicSearchChats = (chatRepository.searchPublicChats(trimmed) as? AppResult.Success)?.data.orEmpty()
+        val foundChats = (knownSearchChats + serverSearchChats + publicSearchChats)
+            .distinctBy { it.id }
+            .filter { contentFilter.isAllowed(it, settings) }
+        val maskedChats = foundChats
+            .mapNotNull { chat -> maskOrDrop(chat, myGender) }
+            .take(CHAT_SEARCH_LIMIT)
         val knownChats = chatRepository.observeChats().first().associateBy { it.id }
+        val searchableChats = (knownChats.values + foundChats).distinctBy { it.id }.associateBy { it.id }
 
         val foundMessages = (chatRepository.searchMessages(trimmed) as? AppResult.Success)?.data.orEmpty()
         val foundPersonalMessages = (chatRepository.searchPersonalMessages(trimmed) as? AppResult.Success)?.data.orEmpty()
         val messageResults = foundMessages.mapNotNull { message ->
+            searchableChats[message.chatId]?.let { chat ->
+                if (!contentFilter.isAllowed(chat, settings)) return@mapNotNull null
+            }
             // We only have the message here, not its chat's title — SearchUseCase intentionally
             // doesn't re-fetch full Chat objects for every message hit (that's a chat-list-sized
             // batch of lookups on every keystroke); it relies on the same masked chat list this
@@ -112,5 +130,6 @@ class SearchUseCase @Inject constructor(
 
     private companion object {
         const val REDACTED_PREVIEW = "محتوى مخفي حتى تتم مراجعة هذه المحادثة"
+        const val CHAT_SEARCH_LIMIT = 50
     }
 }

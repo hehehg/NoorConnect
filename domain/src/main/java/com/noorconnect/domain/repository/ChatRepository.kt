@@ -37,6 +37,12 @@ interface ChatRepository {
      */
     suspend fun searchPublicChats(query: String): AppResult<List<Chat>>
 
+    /** Raw TDLib server-side chat search, matching Telegram's global chat search behavior. */
+    suspend fun searchChatsOnServer(query: String): AppResult<List<Chat>>
+
+    /** Raw TDLib offline search across already known chats (title and username). */
+    suspend fun searchKnownChats(query: String): AppResult<List<Chat>>
+
     /**
      * Raw TDLib global message search across the account's chats (TdApi.SearchMessages) —
      * same warning as [searchPublicChats]: go through SearchUseCase, not this, from UI code.

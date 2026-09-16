@@ -386,6 +386,36 @@ class ChatRepositoryImpl @Inject constructor(
         return AppResult.Success(chats)
     }
 
+    override suspend fun searchChatsOnServer(query: String): AppResult<List<Chat>> {
+        val searchResult = tdLib.send(TdApi.SearchChatsOnServer(query, null, CHAT_SEARCH_LIMIT))
+        val chatIds = when (searchResult) {
+            is AppResult.Success -> searchResult.data.chatIds.toList()
+            is AppResult.Failure -> return searchResult
+            is AppResult.Loading -> return AppResult.Loading
+        }
+        return AppResult.Success(chatIds.mapNotNull { chatId ->
+            when (val result = tdLib.send(TdApi.GetChat(chatId))) {
+                is AppResult.Success -> result.data.toDomain()
+                else -> null
+            }
+        })
+    }
+
+    override suspend fun searchKnownChats(query: String): AppResult<List<Chat>> {
+        val searchResult = tdLib.send(TdApi.SearchChats(query, null, CHAT_SEARCH_LIMIT))
+        val chatIds = when (searchResult) {
+            is AppResult.Success -> searchResult.data.chatIds.toList()
+            is AppResult.Failure -> return searchResult
+            is AppResult.Loading -> return AppResult.Loading
+        }
+        return AppResult.Success(chatIds.mapNotNull { chatId ->
+            when (val result = tdLib.send(TdApi.GetChat(chatId))) {
+                is AppResult.Success -> result.data.toDomain()
+                else -> null
+            }
+        })
+    }
+
     /**
      * Backs SearchUseCase's message search. TDLib API note (verify against your built
      * TdApi.java — this constructor's field order/count has changed between TDLib versions in
@@ -484,6 +514,7 @@ class ChatRepositoryImpl @Inject constructor(
         private const val HISTORY_FETCH_RETRIES = 3
         private const val HISTORY_FETCH_RETRY_DELAY_MS = 400L
         private const val MESSAGE_SEARCH_LIMIT = 50
+        private const val CHAT_SEARCH_LIMIT = 50
         private const val DOWNLOAD_PRIORITY = 32
     }
 }
