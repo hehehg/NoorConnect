@@ -83,6 +83,9 @@ class TdLibManager @Inject constructor(
         val parameters = TdApi.SetTdlibParameters().apply {
             databaseDirectory = config.databaseDirectory
             filesDirectory = config.filesDirectory
+            useMessageDatabase = true
+            useChatInfoDatabase = true
+            useFileDatabase = true
             useTestDc = config.useTestDc
             apiId = config.apiId
             apiHash = config.apiHash

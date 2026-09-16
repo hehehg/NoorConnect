@@ -7,6 +7,7 @@ import com.noorconnect.core.common.AppResult
 import com.noorconnect.domain.model.ChannelAudience
 import com.noorconnect.domain.model.ChannelRecord
 import com.noorconnect.domain.model.ChatModerationStatus
+import com.noorconnect.domain.repository.ChatRepository
 import com.noorconnect.domain.repository.ChatModerationRepository
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -30,7 +31,9 @@ import javax.inject.Singleton
  * read and write — changing field names here means changing them there too.
  */
 @Singleton
-class ChatModerationRepositoryImpl @Inject constructor() : ChatModerationRepository {
+class ChatModerationRepositoryImpl @Inject constructor(
+    private val chatRepository: ChatRepository,
+) : ChatModerationRepository {
 
     private val firestore get() = FirebaseFirestore.getInstance()
 
@@ -42,8 +45,17 @@ class ChatModerationRepositoryImpl @Inject constructor() : ChatModerationReposit
     }
 
     override suspend fun flagForReview(chatId: Long, reason: String): AppResult<Unit> = try {
+        val reviewInfo = (chatRepository.getChatReviewInfo(chatId) as? AppResult.Success)?.data
+        val fields = mutableMapOf<String, Any>(
+            "status" to "pending",
+            "reason" to reason,
+        )
+        reviewInfo?.let {
+            fields["title"] = it.title
+            it.link?.let { link -> fields["link"] = link }
+        }
         firestore.collection(CHANNELS_COLLECTION).document(chatId.toString())
-            .set(mapOf("status" to "pending", "reason" to reason), SetOptions.merge())
+            .set(fields, SetOptions.merge())
             .await()
         AppResult.Success(Unit)
     } catch (e: Exception) {

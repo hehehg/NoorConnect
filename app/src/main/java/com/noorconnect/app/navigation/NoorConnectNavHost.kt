@@ -56,7 +56,7 @@ fun NoorConnectNavHost(navController: NavHostController = rememberNavController(
             arguments = listOf(navArgument("chatId") { type = NavType.LongType }),
         ) {
             // ChatViewModel reads "chatId" straight out of SavedStateHandle — no manual passing here.
-            ChatRoute()
+            ChatRoute(onOpenChat = { chatId -> navController.navigate(Routes.chat(chatId)) })
         }
         composable(Routes.SETTINGS) {
             SettingsRoute()

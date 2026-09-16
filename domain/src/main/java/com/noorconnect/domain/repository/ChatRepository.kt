@@ -2,14 +2,30 @@ package com.noorconnect.domain.repository
 
 import com.noorconnect.core.common.AppResult
 import com.noorconnect.domain.model.Chat
+import com.noorconnect.domain.model.ChatReviewInfo
+import com.noorconnect.domain.model.ChatSendPermission
 import com.noorconnect.domain.model.Message
 import com.noorconnect.domain.model.RemoteFile
 import kotlinx.coroutines.flow.Flow
 
 interface ChatRepository {
     fun observeChats(): Flow<List<Chat>>
+    suspend fun getChatReviewInfo(chatId: Long): AppResult<ChatReviewInfo>
     fun observeMessages(chatId: Long): Flow<List<Message>>
-    suspend fun sendMessage(chatId: Long, text: String): AppResult<Unit>
+    suspend fun sendMessage(chatId: Long, text: String, scheduleDate: Int? = null): AppResult<Unit>
+    suspend fun createPrivateChat(userId: Long): AppResult<Long>
+    suspend fun sendMedia(
+        chatId: Long,
+        path: String,
+        mimeType: String,
+        caption: String,
+        scheduleDate: Int? = null,
+    ): AppResult<Unit>
+    suspend fun getScheduledMessages(chatId: Long): AppResult<List<Message>>
+    suspend fun getChatSendPermission(chatId: Long): AppResult<ChatSendPermission>
+    suspend fun editMessage(chatId: Long, messageId: Long, text: String): AppResult<Unit>
+    suspend fun deleteMessage(chatId: Long, messageId: Long): AppResult<Unit>
+    suspend fun sendScheduledNow(chatId: Long, messageId: Long): AppResult<Unit>
 
     /**
      * Raw TDLib public-chat/channel/group search (TdApi.SearchPublicChats), unfiltered by
@@ -25,6 +41,8 @@ interface ChatRepository {
      */
     suspend fun searchMessages(query: String): AppResult<List<Message>>
 
+    suspend fun searchPersonalMessages(query: String): AppResult<List<Message>>
+
     /**
      * Current local download state for a file (TdApi.GetFile) — does NOT trigger a download,
      * safe to call just to check "is this already on disk" before deciding whether to show a
@@ -39,4 +57,8 @@ interface ChatRepository {
      * behavior the person asked to remove from channels/groups.
      */
     suspend fun downloadFile(fileId: Int): AppResult<RemoteFile>
+
+    suspend fun setChatPinned(chatId: Long, isPinned: Boolean): AppResult<Unit>
+
+    suspend fun setChatArchived(chatId: Long, isArchived: Boolean): AppResult<Unit>
 }

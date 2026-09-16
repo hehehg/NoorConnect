@@ -12,6 +12,21 @@ data class MessagePhoto(
     val height: Int,
 )
 
+enum class MessageMediaType {
+    TEXT,
+    PHOTO,
+    VIDEO,
+    AUDIO,
+    VOICE,
+    DOCUMENT,
+    UNKNOWN,
+}
+
+data class MessageReplyPreview(
+    val text: String,
+    val senderName: String? = null,
+)
+
 data class Message(
     val id: Long,
     val chatId: Long,
@@ -19,5 +34,10 @@ data class Message(
     val text: String,
     val timestamp: Long,
     val isOutgoing: Boolean,
+    val replyTo: MessageReplyPreview? = null,
+    val mediaType: MessageMediaType = MessageMediaType.TEXT,
+    val mediaFileId: Int? = null,
+    val mediaMimeType: String? = null,
+    val mediaName: String? = null,
     val photo: MessagePhoto? = null,
 )

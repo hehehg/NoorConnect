@@ -10,6 +10,7 @@ import com.noorconnect.domain.usecase.DownloadFileUseCase
 import com.noorconnect.domain.usecase.GetChatsUseCase
 import com.noorconnect.domain.usecase.GetFileStateUseCase
 import com.noorconnect.domain.usecase.ManageFoldersUseCase
+import com.noorconnect.domain.usecase.ManageChatUseCase
 import com.noorconnect.domain.usecase.ObserveFoldersUseCase
 import com.noorconnect.domain.usecase.SearchUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -33,11 +35,14 @@ sealed class ChatPhotoDownloadState {
     data object Failed : ChatPhotoDownloadState()
 }
 
+enum class SearchTab { CHATS, MESSAGES, PERSONAL_MESSAGES }
+
 @HiltViewModel
 class ChatsViewModel @Inject constructor(
     getChats: GetChatsUseCase,
     observeFolders: ObserveFoldersUseCase,
     private val manageFolders: ManageFoldersUseCase,
+    private val manageChat: ManageChatUseCase,
     private val search: SearchUseCase,
     private val getFileState: GetFileStateUseCase,
     private val downloadFile: DownloadFileUseCase,
@@ -54,9 +59,29 @@ class ChatsViewModel @Inject constructor(
     val selectedFolderId: StateFlow<String?> = _selectedFolderId
 
     val visibleChats: StateFlow<List<Chat>> = combine(chats, folders, _selectedFolderId) { chats, folders, selectedId ->
-        val folder = folders.find { it.id == selectedId } ?: return@combine chats
-        chats.filter { it.id in folder.chatIds }
+        val active = chats.filterNot { it.isArchived }
+        val folder = folders.find { it.id == selectedId } ?: return@combine active
+        active.filter { it.id in folder.chatIds }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val archivedChats: StateFlow<List<Chat>> = chats
+        .map { list -> list.filter { it.isArchived } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _isArchiveExpanded = MutableStateFlow(false)
+    val isArchiveExpanded: StateFlow<Boolean> = _isArchiveExpanded
+
+    fun toggleArchiveSection() {
+        _isArchiveExpanded.value = !_isArchiveExpanded.value
+    }
+
+    fun togglePin(chat: Chat) {
+        viewModelScope.launch { manageChat.setPinned(chat.id, !chat.isPinned) }
+    }
+
+    fun toggleArchive(chat: Chat) {
+        viewModelScope.launch { manageChat.setArchived(chat.id, !chat.isArchived) }
+    }
 
     private val _isSearchActive = MutableStateFlow(false)
     val isSearchActive: StateFlow<Boolean> = _isSearchActive
@@ -66,6 +91,9 @@ class ChatsViewModel @Inject constructor(
 
     private val _searchResult = MutableStateFlow<SearchResult?>(null)
     val searchResult: StateFlow<SearchResult?> = _searchResult
+
+    private val _selectedSearchTab = MutableStateFlow(SearchTab.CHATS)
+    val selectedSearchTab: StateFlow<SearchTab> = _selectedSearchTab
 
     /**
      * Keyed by TDLib file id (chat.photoFileId), NOT chat id — several chats never share a
@@ -104,6 +132,11 @@ class ChatsViewModel @Inject constructor(
 
     fun openSearch() {
         _isSearchActive.value = true
+        _selectedSearchTab.value = SearchTab.CHATS
+    }
+
+    fun selectSearchTab(tab: SearchTab) {
+        _selectedSearchTab.value = tab
     }
 
     fun closeSearch() {

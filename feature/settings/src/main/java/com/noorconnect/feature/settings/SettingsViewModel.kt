@@ -21,6 +21,19 @@ class SettingsViewModel @Inject constructor(
 
     fun setAllowUnverifiedChannels(allow: Boolean) = update { it.copy(allowUnverifiedChannels = allow) }
     fun setAllowGroups(allow: Boolean) = update { it.copy(allowGroups = allow) }
+    fun setNotificationsEnabled(value: Boolean) = update { it.copy(notificationsEnabled = value) }
+    fun setNotificationPreview(value: Boolean) = update { it.copy(notificationPreview = value) }
+    fun setNotificationSound(value: Boolean) = update { it.copy(notificationSound = value) }
+    fun setNotificationVibration(value: Boolean) = update { it.copy(notificationVibration = value) }
+    fun setInAppSounds(value: Boolean) = update { it.copy(inAppSounds = value) }
+    fun setAutoDownloadPhotos(value: Boolean) = update { it.copy(autoDownloadPhotos = value) }
+    fun setAutoDownloadVideos(value: Boolean) = update { it.copy(autoDownloadVideos = value) }
+    fun setAutoDownloadFiles(value: Boolean) = update { it.copy(autoDownloadFiles = value) }
+    fun setSaveToGallery(value: Boolean) = update { it.copy(saveToGallery = value) }
+    fun setAutoplayVideos(value: Boolean) = update { it.copy(autoplayVideos = value) }
+    fun setAutoplayGifs(value: Boolean) = update { it.copy(autoplayGifs = value) }
+    fun setSendByEnter(value: Boolean) = update { it.copy(sendByEnter = value) }
+    fun setReduceDataUsage(value: Boolean) = update { it.copy(reduceDataUsage = value) }
 
     fun addBlockedKeyword(keyword: String) {
         if (keyword.isBlank()) return

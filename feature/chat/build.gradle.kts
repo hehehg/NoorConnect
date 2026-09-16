@@ -20,6 +20,7 @@ dependencies {
     implementation(project(":domain"))
     implementation(project(":core:common"))
     implementation(project(":core:designsystem"))
+    implementation(libs.core.ktx)
     implementation(libs.compose.material.icons)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

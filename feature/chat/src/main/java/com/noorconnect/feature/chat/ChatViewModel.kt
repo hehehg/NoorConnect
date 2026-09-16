@@ -10,21 +10,26 @@ import com.noorconnect.domain.model.ReportReason
 import com.noorconnect.domain.usecase.CheckChatAccessUseCase
 import com.noorconnect.domain.usecase.DownloadFileUseCase
 import com.noorconnect.domain.usecase.GetChatByIdUseCase
+import com.noorconnect.domain.usecase.GetChatSendPermissionUseCase
 import com.noorconnect.domain.usecase.GetFileStateUseCase
 import com.noorconnect.domain.usecase.GetMessagesUseCase
 import com.noorconnect.domain.usecase.GetUserDisplayNameUseCase
 import com.noorconnect.domain.usecase.GetUserProfilePhotoUseCase
+import com.noorconnect.domain.usecase.GetUserUsernameUseCase
 import com.noorconnect.domain.usecase.ObserveBannedWordsUseCase
 import com.noorconnect.domain.usecase.ReportChatUseCase
 import com.noorconnect.domain.usecase.ScanMessagesForBannedWordsUseCase
 import com.noorconnect.domain.usecase.SendMessageUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -47,7 +52,7 @@ sealed class PhotoDownloadState {
     /** Not checked yet, or checked and confirmed not on disk — in a channel/group message
      *  photo this is the state the UI renders as a "tap to download" placeholder. */
     data object NotDownloaded : PhotoDownloadState()
-    data object Downloading : PhotoDownloadState()
+    data class Downloading(val progress: Int? = null) : PhotoDownloadState()
     data class Ready(val localPath: String) : PhotoDownloadState()
     data object Failed : PhotoDownloadState()
 }
@@ -59,15 +64,28 @@ sealed class ReportState {
     data object Failed : ReportState()
 }
 
+sealed class MediaSendState {
+    data object Idle : MediaSendState()
+    data object Sending : MediaSendState()
+    data class Failed(val message: String) : MediaSendState()
+}
+
+sealed class MessageSendState {
+    data object Idle : MessageSendState()
+    data class Failed(val message: String) : MessageSendState()
+}
+
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     getMessages: GetMessagesUseCase,
     getChatById: GetChatByIdUseCase,
     private val sendMessage: SendMessageUseCase,
+    private val getChatSendPermission: GetChatSendPermissionUseCase,
     private val checkChatAccess: CheckChatAccessUseCase,
     private val scanMessagesForBannedWords: ScanMessagesForBannedWordsUseCase,
     private val getUserDisplayName: GetUserDisplayNameUseCase,
+    private val getUserUsername: GetUserUsernameUseCase,
     private val getUserProfilePhoto: GetUserProfilePhotoUseCase,
     private val getFileState: GetFileStateUseCase,
     private val downloadFile: DownloadFileUseCase,
@@ -94,18 +112,37 @@ class ChatViewModel @Inject constructor(
     private val _senderNames = MutableStateFlow<Map<Long, String>>(emptyMap())
     val senderNames: StateFlow<Map<Long, String>> = _senderNames
 
+    // senderId -> public username for profile links / direct-user actions in the avatar menu.
+    private val _senderUsernames = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val senderUsernames: StateFlow<Map<Long, String>> = _senderUsernames
+
     // senderId -> that sender's avatar file id, only present once resolved AND the sender
     // actually has a profile photo (see resolveSender below for the "no photo" case).
     private val _senderPhotoFileIds = MutableStateFlow<Map<Long, Int>>(emptyMap())
     val senderPhotoFileIds: StateFlow<Map<Long, Int>> = _senderPhotoFileIds
+
+    private val _openPrivateChatRequests = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val openPrivateChatRequests: SharedFlow<Long> = _openPrivateChatRequests
 
     // Shared by message-content photos and sender-avatar photos alike — see PhotoDownloadState's
     // kdoc for why one map covers both.
     private val _photoStates = MutableStateFlow<Map<Int, PhotoDownloadState>>(emptyMap())
     val photoStates: StateFlow<Map<Int, PhotoDownloadState>> = _photoStates
 
+    private val _mediaSendState = MutableStateFlow<MediaSendState>(MediaSendState.Idle)
+    val mediaSendState: StateFlow<MediaSendState> = _mediaSendState
+
+    private val _messageSendState = MutableStateFlow<MessageSendState>(MessageSendState.Idle)
+    val messageSendState: StateFlow<MessageSendState> = _messageSendState
+
     private val _reportState = MutableStateFlow<ReportState>(ReportState.Idle)
     val reportState: StateFlow<ReportState> = _reportState
+
+    private val _scheduledMessages = MutableStateFlow<List<Message>>(emptyList())
+    val scheduledMessages: StateFlow<List<Message>> = _scheduledMessages
+
+    private val _sendPermission = MutableStateFlow<com.noorconnect.domain.model.ChatSendPermission?>(null)
+    val sendPermission: StateFlow<com.noorconnect.domain.model.ChatSendPermission?> = _sendPermission
 
     // Tracks which senders we've already asked TDLib about, independent of whether they turned
     // out to have a photo — without this, a sender with NO profile photo would be re-queried on
@@ -119,6 +156,20 @@ class ChatViewModel @Inject constructor(
             _accessState.value = when (val result = checkChatAccess(chatId)) {
                 is CheckChatAccessUseCase.Result.Allowed -> ChatAccessState.Allowed
                 is CheckChatAccessUseCase.Result.Denied -> ChatAccessState.Denied(result.reason)
+            }
+        }
+
+        viewModelScope.launch {
+            when (val result = getChatSendPermission(chatId)) {
+                is AppResult.Success -> _sendPermission.value = result.data
+                else -> Unit
+            }
+        }
+
+        viewModelScope.launch {
+            when (val result = sendMessage.scheduled(chatId)) {
+                is AppResult.Success -> _scheduledMessages.value = result.data
+                else -> Unit
             }
         }
 
@@ -162,27 +213,119 @@ class ChatViewModel @Inject constructor(
             combine(messages, chat.filterNotNull()) { msgs, currentChat -> msgs to currentChat }
                 .collect { (msgs, currentChat) ->
                     val isChannelOrGroup = currentChat.isChannel || currentChat.isGroup
-                    msgs.mapNotNull { it.photo }.distinctBy { it.fileId }.forEach { photo ->
-                        if (_photoStates.value.containsKey(photo.fileId)) return@forEach
-                        viewModelScope.launch { checkPhotoState(photo.fileId, autoDownload = !isChannelOrGroup) }
+                    msgs.mapNotNull { it.mediaFileId }.distinct().forEach { fileId ->
+                        if (_photoStates.value.containsKey(fileId)) return@forEach
+                        viewModelScope.launch { checkPhotoState(fileId, autoDownload = !isChannelOrGroup) }
                     }
                 }
         }
     }
 
-    fun send(text: String) {
+    fun send(text: String, scheduleDate: Int? = null) {
         if (text.isBlank()) return
-        viewModelScope.launch { sendMessage(chatId, text) }
+        viewModelScope.launch {
+            when (val result = sendMessage(chatId, text, scheduleDate)) {
+                is AppResult.Success -> {
+                    _messageSendState.value = MessageSendState.Idle
+                    if (scheduleDate != null) refreshScheduled()
+                }
+                is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
+                is AppResult.Loading -> Unit
+            }
+        }
+    }
+
+    fun sendMedia(path: String, mimeType: String, caption: String, scheduleDate: Int? = null) {
+        viewModelScope.launch {
+            _mediaSendState.value = MediaSendState.Sending
+            when (val result = sendMessage.media(chatId, path, mimeType, caption, scheduleDate)) {
+                is AppResult.Success -> {
+                    _mediaSendState.value = MediaSendState.Idle
+                    if (scheduleDate != null) refreshScheduled()
+                }
+                is AppResult.Failure -> _mediaSendState.value = MediaSendState.Failed(result.message)
+                is AppResult.Loading -> _mediaSendState.value = MediaSendState.Sending
+            }
+        }
+    }
+
+    fun edit(messageId: Long, text: String) {
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            when (val result = sendMessage.edit(chatId, messageId, text)) {
+                is AppResult.Success -> {
+                    _messageSendState.value = MessageSendState.Idle
+                    refreshScheduled()
+                }
+                is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
+                is AppResult.Loading -> Unit
+            }
+        }
+    }
+
+    fun delete(messageId: Long) {
+        viewModelScope.launch {
+            when (val result = sendMessage.delete(chatId, messageId)) {
+                is AppResult.Success -> refreshScheduled()
+                is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
+                is AppResult.Loading -> Unit
+            }
+        }
+    }
+
+    fun sendScheduledNow(messageId: Long) {
+        viewModelScope.launch {
+            when (val result = sendMessage.sendScheduledNow(chatId, messageId)) {
+                is AppResult.Success -> refreshScheduled()
+                is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
+                is AppResult.Loading -> Unit
+            }
+        }
+    }
+
+    private suspend fun refreshScheduled() {
+        when (val result = sendMessage.scheduled(chatId)) {
+            is AppResult.Success -> _scheduledMessages.value = result.data
+            else -> Unit
+        }
     }
 
     /** The only entry point ChatScreen calls for a channel/group MESSAGE photo tap — avatars
      *  never go through a tap, they're always auto-downloaded (see the init block above). */
     fun downloadPhoto(fileId: Int) {
         if (_photoStates.value[fileId] is PhotoDownloadState.Downloading) return
-        _photoStates.value += (fileId to PhotoDownloadState.Downloading)
+        _photoStates.value += (fileId to PhotoDownloadState.Downloading())
         viewModelScope.launch {
-            val result = downloadFile(fileId)
-            _photoStates.value += (fileId to result.toPhotoDownloadState())
+            when (val result = downloadFile(fileId)) {
+                is AppResult.Success -> {
+                    var file = result.data
+                    while (!file.isDownloaded) {
+                        val progress = file.expectedSize.takeIf { it > 0 }?.let {
+                            ((file.downloadedSize * 100) / it).toInt().coerceIn(0, 99)
+                        }
+                        _photoStates.value += (fileId to PhotoDownloadState.Downloading(progress))
+                        delay(250)
+                        file = when (val state = getFileState(fileId)) {
+                            is AppResult.Success -> state.data
+                            else -> break
+                        }
+                    }
+                    _photoStates.value += (fileId to file.toPhotoDownloadState())
+                }
+                is AppResult.Failure -> _photoStates.value += (fileId to PhotoDownloadState.Failed)
+                is AppResult.Loading -> _photoStates.value += (fileId to PhotoDownloadState.Failed)
+            }
+        }
+    }
+
+    fun openPrivateChatWith(userId: Long) {
+        viewModelScope.launch {
+            val result = when (val created = sendMessage.createPrivateChat(userId)) {
+                is AppResult.Success -> created.data
+                is AppResult.Failure -> return@launch
+                is AppResult.Loading -> return@launch
+            }
+            _openPrivateChatRequests.tryEmit(result)
         }
     }
 
@@ -204,6 +347,11 @@ class ChatViewModel @Inject constructor(
         when (val nameResult = getUserDisplayName(senderId)) {
             is AppResult.Success -> _senderNames.value += (senderId to nameResult.data)
             else -> Unit // leave unresolved — ChatScreen falls back to a generic label
+        }
+
+        when (val usernameResult = getUserUsername(senderId)) {
+            is AppResult.Success -> _senderUsernames.value += (senderId to usernameResult.data.orEmpty())
+            else -> Unit
         }
 
         when (val photoResult = getUserProfilePhoto(senderId)) {
@@ -228,9 +376,6 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun AppResult<com.noorconnect.domain.model.RemoteFile>.toPhotoDownloadState(): PhotoDownloadState =
-        when (this) {
-            is AppResult.Success -> data.localPath?.let { PhotoDownloadState.Ready(it) } ?: PhotoDownloadState.Failed
-            else -> PhotoDownloadState.Failed
-        }
+    private fun com.noorconnect.domain.model.RemoteFile.toPhotoDownloadState(): PhotoDownloadState =
+        localPath?.let { PhotoDownloadState.Ready(it) } ?: PhotoDownloadState.Failed
 }

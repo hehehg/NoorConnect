@@ -21,6 +21,12 @@ data class Chat(
     val isGroup: Boolean,
     val photoFileId: Int? = null,
     val moderationStatus: ChatModerationStatus = ChatModerationStatus.Unreviewed,
+    val isPinned: Boolean = false,
+    val isArchived: Boolean = false,
+    val order: Long = 0L,
+    val isMember: Boolean = false,
+    val canSendMessages: Boolean = true,
+    val sendRestrictionReason: String? = null,
 ) {
     /**
      * Single source of truth for "should this chat's photo/content ever be rendered". Used by
