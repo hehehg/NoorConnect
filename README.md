@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/license-see%20LICENSE-lightgrey)](#)
 [![Security Policy](https://img.shields.io/badge/security-SECURITY.md-critical)](./SECURITY.md)
 
-> عميل أندرويد مخصّص لتليجرام (مبني على TDLib) بقواعد فلترة محتوى قابلة للتخصيص على مستوى القنوات والجروبات والكلمات، مُدارة عن بُعد عبر Firebase.
+> عميل أندرويد مخصّص لتليجرام (مبني على  TDLib) بقواعد فلترة محتوى قابلة للتخصيص على مستوى القنوات والجروبات والكلمات، مُدارة عن بُعد عبر Firebase.
 
 ---
 
