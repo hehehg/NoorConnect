@@ -13,6 +13,8 @@ import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import java.io.File
 import java.util.Calendar
+import java.util.Locale
+import java.text.SimpleDateFormat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
@@ -39,16 +41,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.SaveAlt
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Image as ImageIcon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -72,6 +78,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
@@ -81,6 +88,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -90,6 +102,7 @@ import com.noorconnect.domain.model.MessageMediaType
 import com.noorconnect.domain.model.MessagePhoto
 import com.noorconnect.domain.model.ReportReason
 import kotlin.math.absoluteValue
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 private fun ContentResolver.displayName(uri: Uri): String? =
     query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
@@ -105,11 +118,15 @@ private fun uploadSuffix(fileName: String?, mimeType: String): String {
     return extension?.let { ".${it.lowercase()}" } ?: ".bin"
 }
 
+private fun formatMessageTimestamp(timestampSeconds: Long): String =
+    SimpleDateFormat("EEEE، d MMMM yyyy • HH:mm", Locale("ar")).format(timestampSeconds * 1000L)
+
 /** Public entry point for :app — reads chatId from the nav back stack via SavedStateHandle. */
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 fun ChatRoute(onOpenChat: (Long) -> Unit = {}) {
     val viewModel: ChatViewModel = hiltViewModel()
+    val context = LocalContext.current
     val accessState by viewModel.accessState.collectAsStateWithLifecycle()
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val senderNames by viewModel.senderNames.collectAsStateWithLifecycle()
@@ -122,6 +139,8 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}) {
     val reportState by viewModel.reportState.collectAsStateWithLifecycle()
     val scheduledMessages by viewModel.scheduledMessages.collectAsStateWithLifecycle()
     val sendPermission by viewModel.sendPermission.collectAsStateWithLifecycle()
+    val isLoadingOlder by viewModel.isLoadingOlder.collectAsStateWithLifecycle()
+    val hasReachedBeginning by viewModel.hasReachedBeginning.collectAsStateWithLifecycle()
 
     ChatScreen(
         title = chat?.title ?: "محادثة",
@@ -137,18 +156,35 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}) {
         sendRestrictionReason = sendPermission?.reason ?: chat?.sendRestrictionReason,
         reportState = reportState,
         scheduledMessages = scheduledMessages,
+        isLoadingOlder = isLoadingOlder,
+        hasReachedBeginning = hasReachedBeginning,
         onSend = viewModel::send,
         onSendMedia = viewModel::sendMedia,
         onEdit = viewModel::edit,
         onDelete = viewModel::delete,
         onSendScheduledNow = viewModel::sendScheduledNow,
         onDownloadPhoto = viewModel::downloadPhoto,
+        onLoadOlderMessages = viewModel::loadOlderMessages,
+        onShareMessage = viewModel::shareMessage,
         onOpenPrivateChat = viewModel::openPrivateChatWith,
         onReport = viewModel::report,
         onDismissReportState = viewModel::dismissReportState,
     )
     LaunchedEffect(Unit) {
         viewModel.openPrivateChatRequests.collect { onOpenChat(it) }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.messageShareRequests.collect { link ->
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, link)
+            }
+            try {
+                context.startActivity(Intent.createChooser(intent, "مشاركة الرسالة"))
+            } catch (_: ActivityNotFoundException) {
+                Unit
+            }
+        }
     }
 }
 
@@ -168,12 +204,16 @@ private fun ChatScreen(
     sendRestrictionReason: String?,
     reportState: ReportState,
     scheduledMessages: List<Message>,
+    isLoadingOlder: Boolean,
+    hasReachedBeginning: Boolean,
     onSend: (String, Int?) -> Unit,
     onSendMedia: (String, String, String, Int?) -> Unit,
     onEdit: (Long, String) -> Unit,
     onDelete: (Long) -> Unit,
     onSendScheduledNow: (Long) -> Unit,
     onDownloadPhoto: (Int) -> Unit,
+    onLoadOlderMessages: () -> Unit,
+    onShareMessage: (Long) -> Unit,
     onOpenPrivateChat: (Long) -> Unit,
     onReport: (ReportReason, String) -> Unit,
     onDismissReportState: () -> Unit,
@@ -213,12 +253,16 @@ private fun ChatScreen(
                     draft = draft,
                     onDraftChange = { draft = it },
                     scheduledMessages = scheduledMessages,
+                    isLoadingOlder = isLoadingOlder,
+                    hasReachedBeginning = hasReachedBeginning,
                     onSend = { text, scheduleDate -> onSend(text, scheduleDate); draft = "" },
                     onSendMedia = onSendMedia,
                     onEdit = onEdit,
                     onDelete = onDelete,
                     onSendScheduledNow = onSendScheduledNow,
                     onDownloadPhoto = onDownloadPhoto,
+                    onLoadOlderMessages = onLoadOlderMessages,
+                    onShareMessage = onShareMessage,
                     onOpenPrivateChat = onOpenPrivateChat,
                 )
             }
@@ -272,6 +316,8 @@ private fun ChatContent(
     canSendMessages: Boolean,
     sendRestrictionReason: String?,
     scheduledMessages: List<Message>,
+    isLoadingOlder: Boolean,
+    hasReachedBeginning: Boolean,
     draft: String,
     onDraftChange: (String) -> Unit,
     onSend: (String, Int?) -> Unit,
@@ -280,6 +326,8 @@ private fun ChatContent(
     onDelete: (Long) -> Unit,
     onSendScheduledNow: (Long) -> Unit,
     onDownloadPhoto: (Int) -> Unit,
+    onLoadOlderMessages: () -> Unit,
+    onShareMessage: (Long) -> Unit,
     onOpenPrivateChat: (Long) -> Unit,
 ) {
     val context = LocalContext.current
@@ -329,8 +377,19 @@ private fun ChatContent(
         pendingSavePath = null
     }
     val listState = rememberLazyListState()
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.scrollToItem(messages.size - 1)
+    var initialScrollDone by remember { mutableStateOf(false) }
+    LaunchedEffect(messages.isNotEmpty()) {
+        if (messages.isNotEmpty() && !initialScrollDone) {
+            listState.scrollToItem(messages.size - 1)
+            initialScrollDone = true
+        }
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .distinctUntilChanged()
+            .collect { firstVisibleItemIndex ->
+                if (firstVisibleItemIndex <= 2) onLoadOlderMessages()
+            }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -375,6 +434,9 @@ private fun ChatContent(
                                     headlineContent = {
                                         Text(scheduled.text.ifBlank { "مرفق مجدول" }, maxLines = 1)
                                     },
+                                    supportingContent = {
+                                        Text("موعد الإرسال: ${formatMessageTimestamp(scheduled.timestamp)}")
+                                    },
                                     trailingContent = {
                                         Row {
                                             TextButton(onClick = { onSendScheduledNow(scheduled.id) }) {
@@ -398,6 +460,27 @@ private fun ChatContent(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
         ) {
+            if (isLoadingOlder) {
+                item(key = "loading-older") {
+                    Text(
+                        "جار تحميل الرسائل الأقدم...",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            } else if (hasReachedBeginning) {
+                item(key = "beginning") {
+                    Text(
+                        "لقد وصلت إلى بداية القناة",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
             items(messages, key = { it.id }) { message ->
                 val avatarFileId = if (message.isOutgoing) null else senderPhotoFileIds[message.senderId]
                 MessageBubble(
@@ -414,6 +497,8 @@ private fun ChatContent(
                         saveFile.launch(name)
                     },
                     onOpenPrivateChat = onOpenPrivateChat,
+                    onDelete = onDelete,
+                    onShareMessage = onShareMessage,
                 )
             }
         }
@@ -507,6 +592,8 @@ private fun MessageBubble(
     onDownloadMedia: () -> Unit,
     onSaveMedia: (String, String) -> Unit,
     onOpenPrivateChat: (Long) -> Unit,
+    onDelete: (Long) -> Unit,
+    onShareMessage: (Long) -> Unit,
     onLongPress: () -> Unit = {},
 ) {
     val avatarColor = colorForId(message.senderId)
@@ -517,6 +604,7 @@ private fun MessageBubble(
     }
     val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
+    var messageMenuExpanded by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -527,15 +615,16 @@ private fun MessageBubble(
             Spacer(modifier = Modifier.size(6.dp))
         }
 
-        Surface(
-            color = bubbleColor,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.widthIn(max = 280.dp).combinedClickable(
-                onClick = {},
-                onLongClick = onLongPress,
-            ),
-        ) {
-            Column(modifier = Modifier.padding(10.dp)) {
+        Box {
+            Surface(
+                color = bubbleColor,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.widthIn(max = 280.dp).combinedClickable(
+                    onClick = {},
+                    onLongClick = { messageMenuExpanded = true; onLongPress() },
+                ),
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
                 Text(senderName, color = avatarColor, style = MaterialTheme.typography.labelMedium)
 
                 message.replyTo?.let { reply ->
@@ -546,7 +635,11 @@ private fun MessageBubble(
                     ) {
                         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
                             Text(text = reply.senderName ?: "إجابة", style = MaterialTheme.typography.labelSmall, color = avatarColor)
-                            Text(text = reply.text.ifBlank { "محتوى" }, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                            LinkifiedText(
+                                text = reply.text.ifBlank { "محتوى" },
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 2,
+                            )
                         }
                     }
                 }
@@ -561,7 +654,9 @@ private fun MessageBubble(
                     }
                     if (message.text.isNotBlank()) Spacer(modifier = Modifier.size(4.dp))
                 }
-                if (message.text.isNotBlank()) Text(message.text)
+                if (message.text.isNotBlank()) {
+                    LinkifiedText(message.text, style = MaterialTheme.typography.bodyMedium)
+                }
                 if (message.mediaType != MessageMediaType.TEXT && message.mediaFileId != null && message.mediaMimeType != null) {
                     Spacer(modifier = Modifier.size(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -613,6 +708,44 @@ private fun MessageBubble(
                         }
                     }
                 }
+                    Text(
+                        formatMessageTimestamp(message.timestamp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+            androidx.compose.material3.DropdownMenu(
+                expanded = messageMenuExpanded,
+                onDismissRequest = { messageMenuExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("نسخ الرسالة") },
+                    leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
+                    onClick = {
+                        val text = message.text.ifBlank { message.mediaName ?: "رسالة" }
+                        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("message", text))
+                        messageMenuExpanded = false
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("مشاركة رابط الرسالة") },
+                    leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                    onClick = {
+                        messageMenuExpanded = false
+                        onShareMessage(message.id)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("حذف الرسالة") },
+                    leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                    onClick = {
+                        messageMenuExpanded = false
+                        onDelete(message.id)
+                    },
+                )
             }
         }
 
@@ -645,6 +778,58 @@ private fun MessageBubble(
             }
         }
     }
+}
+
+private val messageUrlRegex = Regex("https?://[^\\s]+")
+
+@Composable
+private fun LinkifiedText(
+    text: String,
+    style: TextStyle,
+    maxLines: Int = Int.MAX_VALUE,
+) {
+    val matches = messageUrlRegex.findAll(text).toList()
+    if (matches.isEmpty()) {
+        Text(text = text, style = style, maxLines = maxLines)
+        return
+    }
+
+    val annotatedText = buildAnnotatedString {
+        var cursor = 0
+        matches.forEach { match ->
+            append(text.substring(cursor, match.range.first))
+            val cleanUrl = match.value.trimEnd('.', '،', ',', '!', '؟', ')', ']', '}')
+            withStyle(
+                SpanStyle(
+                    color = MaterialTheme.colorScheme.primary,
+                    textDecoration = TextDecoration.Underline,
+                ),
+            ) {
+                pushStringAnnotation("URL", cleanUrl)
+                append(match.value)
+                pop()
+            }
+            cursor = match.range.last + 1
+        }
+        append(text.substring(cursor))
+    }
+    val context = LocalContext.current
+    ClickableText(
+        text = annotatedText,
+        style = style,
+        maxLines = maxLines,
+        onClick = { offset ->
+            annotatedText.getStringAnnotations("URL", offset, offset)
+                .firstOrNull()
+                ?.let { annotation ->
+                    try {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(annotation.item)))
+                    } catch (_: ActivityNotFoundException) {
+                        Unit
+                    }
+                }
+        },
+    )
 }
 
 /**

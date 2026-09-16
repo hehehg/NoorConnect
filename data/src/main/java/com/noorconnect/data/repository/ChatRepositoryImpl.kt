@@ -176,10 +176,8 @@ class ChatRepositoryImpl @Inject constructor(
      * that's the exact "only the last message shows" symptom, now with a real fix attempt
      * instead of just silently swallowing the failure.
      *
-     * Known simplification (intentional): this doesn't call TdApi.CloseChat when the screen
-     * is left, and doesn't yet support scrolling up for older messages (GetChatHistory is
-     * only called once, for the most recent page). Both are natural next additions here, not
-     * silently assumed to be handled.
+    * Known simplification (intentional): this doesn't call TdApi.CloseChat when the screen
+    * is left. Older pages are requested explicitly by ChatViewModel as the user scrolls up.
      */
     override fun observeMessages(chatId: Long): Flow<List<Message>> = flow {
         tdLib.send(TdApi.OpenChat(chatId))
@@ -212,6 +210,28 @@ class ChatRepositoryImpl @Inject constructor(
                     }
                 },
         )
+    }
+
+    override suspend fun loadOlderMessages(
+        chatId: Long,
+        fromMessageId: Long,
+        limit: Int,
+    ): AppResult<List<Message>> = when (
+        val result = tdLib.send(TdApi.GetChatHistory(chatId, fromMessageId, 0, limit, false))
+    ) {
+        is AppResult.Success -> AppResult.Success(
+            result.data.messages?.filterNotNull()?.map { it.toDomain() }?.reversed().orEmpty(),
+        )
+        is AppResult.Failure -> result
+        is AppResult.Loading -> AppResult.Loading
+    }
+
+    override suspend fun getMessageLink(chatId: Long, messageId: Long): AppResult<String> = when (
+        val result = tdLib.send(TdApi.GetMessageLink(chatId, messageId, 0, 0, "", false, false))
+    ) {
+        is AppResult.Success -> AppResult.Success(result.data.link)
+        is AppResult.Failure -> result
+        is AppResult.Loading -> AppResult.Loading
     }
 
     override suspend fun sendMessage(chatId: Long, text: String, scheduleDate: Int?): AppResult<Unit> {

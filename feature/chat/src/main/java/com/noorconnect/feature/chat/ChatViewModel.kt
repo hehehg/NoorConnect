@@ -12,6 +12,7 @@ import com.noorconnect.domain.usecase.DownloadFileUseCase
 import com.noorconnect.domain.usecase.GetChatByIdUseCase
 import com.noorconnect.domain.usecase.GetChatSendPermissionUseCase
 import com.noorconnect.domain.usecase.GetFileStateUseCase
+import com.noorconnect.domain.usecase.GetMessageLinkUseCase
 import com.noorconnect.domain.usecase.GetMessagesUseCase
 import com.noorconnect.domain.usecase.GetUserDisplayNameUseCase
 import com.noorconnect.domain.usecase.GetUserProfilePhotoUseCase
@@ -90,6 +91,8 @@ class ChatViewModel @Inject constructor(
     private val getFileState: GetFileStateUseCase,
     private val downloadFile: DownloadFileUseCase,
     private val reportChat: ReportChatUseCase,
+    private val loadOlderMessagesUseCase: LoadOlderMessagesUseCase,
+    private val getMessageLink: GetMessageLinkUseCase,
     observeBannedWords: ObserveBannedWordsUseCase,
 ) : ViewModel() {
 
@@ -99,7 +102,15 @@ class ChatViewModel @Inject constructor(
     private val _accessState = MutableStateFlow<ChatAccessState>(ChatAccessState.Checking)
     val accessState: StateFlow<ChatAccessState> = _accessState
 
-    val messages: StateFlow<List<Message>> = getMessages(chatId)
+    private val _olderMessages = MutableStateFlow<List<Message>>(emptyList())
+    private val _isLoadingOlder = MutableStateFlow(false)
+    val isLoadingOlder: StateFlow<Boolean> = _isLoadingOlder
+    private val _hasReachedBeginning = MutableStateFlow(false)
+    val hasReachedBeginning: StateFlow<Boolean> = _hasReachedBeginning
+
+    val messages: StateFlow<List<Message>> = combine(getMessages(chatId), _olderMessages) { current, older ->
+        (older + current).distinctBy { it.id }.sortedBy { it.timestamp }
+    }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Used for the top bar title and to decide auto-download (DM) vs tap-to-download
@@ -123,6 +134,9 @@ class ChatViewModel @Inject constructor(
 
     private val _openPrivateChatRequests = MutableSharedFlow<Long>(extraBufferCapacity = 1)
     val openPrivateChatRequests: SharedFlow<Long> = _openPrivateChatRequests
+
+    private val _messageShareRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val messageShareRequests: SharedFlow<String> = _messageShareRequests
 
     // Shared by message-content photos and sender-avatar photos alike — see PhotoDownloadState's
     // kdoc for why one map covers both.
@@ -273,6 +287,40 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun loadOlderMessages() {
+        if (_isLoadingOlder.value || _hasReachedBeginning.value) return
+        val oldestMessage = messages.value.firstOrNull() ?: return
+        _isLoadingOlder.value = true
+        viewModelScope.launch {
+            when (val result = loadOlderMessagesUseCase(chatId, oldestMessage.id, MESSAGE_PAGE_SIZE)) {
+                is AppResult.Success -> {
+                    val older = result.data
+                    val currentIds = messages.value.mapTo(mutableSetOf()) { it.id }
+                    val newMessages = older.filterNot { it.id in currentIds }
+                    _olderMessages.value = (_olderMessages.value + older)
+                        .distinctBy { it.id }
+                        .sortedBy { it.timestamp }
+                    if (older.size < MESSAGE_PAGE_SIZE || older.isEmpty() || newMessages.size != older.size) {
+                        _hasReachedBeginning.value = true
+                    }
+                }
+                is AppResult.Failure -> Unit
+                is AppResult.Loading -> Unit
+            }
+            _isLoadingOlder.value = false
+        }
+    }
+
+    fun shareMessage(messageId: Long) {
+        viewModelScope.launch {
+            when (val result = getMessageLink(chatId, messageId)) {
+                is AppResult.Success -> _messageShareRequests.emit(result.data)
+                is AppResult.Failure -> Unit
+                is AppResult.Loading -> Unit
+            }
+        }
+    }
+
     fun sendScheduledNow(messageId: Long) {
         viewModelScope.launch {
             when (val result = sendMessage.sendScheduledNow(chatId, messageId)) {
@@ -378,4 +426,8 @@ class ChatViewModel @Inject constructor(
 
     private fun com.noorconnect.domain.model.RemoteFile.toPhotoDownloadState(): PhotoDownloadState =
         localPath?.let { PhotoDownloadState.Ready(it) } ?: PhotoDownloadState.Failed
+
+    companion object {
+        private const val MESSAGE_PAGE_SIZE = 50
+    }
 }
