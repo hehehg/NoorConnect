@@ -17,6 +17,7 @@ import com.noorconnect.domain.usecase.GetMessagesUseCase
 import com.noorconnect.domain.usecase.GetUserDisplayNameUseCase
 import com.noorconnect.domain.usecase.GetUserProfilePhotoUseCase
 import com.noorconnect.domain.usecase.GetUserUsernameUseCase
+import com.noorconnect.domain.usecase.LoadOlderMessagesUseCase
 import com.noorconnect.domain.usecase.ObserveBannedWordsUseCase
 import com.noorconnect.domain.usecase.ReportChatUseCase
 import com.noorconnect.domain.usecase.ScanMessagesForBannedWordsUseCase
