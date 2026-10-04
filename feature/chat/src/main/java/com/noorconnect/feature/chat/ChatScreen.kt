@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Image as ImageIcon
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -124,7 +125,7 @@ private fun formatMessageTimestamp(timestampSeconds: Long): String =
 /** Public entry point for :app — reads chatId from the nav back stack via SavedStateHandle. */
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-fun ChatRoute(onOpenChat: (Long) -> Unit = {}) {
+fun ChatRoute(onOpenChat: (Long) -> Unit = {}, onOpenChannelInfo: (Long) -> Unit = {}) {
     val viewModel: ChatViewModel = hiltViewModel()
     val context = LocalContext.current
     val accessState by viewModel.accessState.collectAsStateWithLifecycle()
@@ -144,6 +145,7 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}) {
 
     ChatScreen(
         title = chat?.title ?: "محادثة",
+        isChannel = chat?.isChannel == true,
         accessState = accessState,
         messages = messages,
         senderNames = senderNames,
@@ -169,6 +171,7 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}) {
         onOpenPrivateChat = viewModel::openPrivateChatWith,
         onReport = viewModel::report,
         onDismissReportState = viewModel::dismissReportState,
+        onOpenChannelInfo = { chat?.let { onOpenChannelInfo(it.id) } },
     )
     LaunchedEffect(Unit) {
         viewModel.openPrivateChatRequests.collect { onOpenChat(it) }
@@ -192,6 +195,7 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}) {
 @OptIn(ExperimentalMaterial3Api::class)
 private fun ChatScreen(
     title: String,
+    isChannel: Boolean,
     accessState: ChatAccessState,
     messages: List<Message>,
     senderNames: Map<Long, String>,
@@ -217,6 +221,7 @@ private fun ChatScreen(
     onOpenPrivateChat: (Long) -> Unit,
     onReport: (ReportReason, String) -> Unit,
     onDismissReportState: () -> Unit,
+    onOpenChannelInfo: () -> Unit,
 ) {
     var showReportDialog by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
@@ -226,6 +231,11 @@ private fun ChatScreen(
             TopAppBar(
                 title = { Text(title, maxLines = 1) },
                 actions = {
+                    if (isChannel) {
+                        IconButton(onClick = onOpenChannelInfo) {
+                            Icon(Icons.Filled.Info, contentDescription = "معلومات القناة")
+                        }
+                    }
                     // "الإبلاغ عن المحادثة" — available on every chat (channel, group, or
                     // individual), not gated behind Allowed state: reporting is exactly how a
                     // person flags a chat that shouldn't have passed the automatic checks.

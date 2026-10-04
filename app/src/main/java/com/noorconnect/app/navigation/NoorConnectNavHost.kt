@@ -6,9 +6,11 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navDeepLink
 import androidx.navigation.navArgument
 import com.noorconnect.feature.auth.AuthRoute
 import com.noorconnect.feature.chat.ChatRoute
+import com.noorconnect.feature.channelinfo.ChannelInfoRoute
 import com.noorconnect.feature.chats.ChatsRoute
 import com.noorconnect.feature.onboarding.OnboardingRoute
 import com.noorconnect.feature.settings.SettingsRoute
@@ -24,8 +26,12 @@ private object Routes {
     const val AUTH = "auth"
     const val CHATS = "chats"
     const val CHAT = "chat/{chatId}"
+    const val CHANNEL_INFO = "channel-info/{channelId}"
+    const val CHANNEL_INFO_BY_USERNAME = "channel-info/username/{username}"
+    const val CHANNEL_INFO_BY_INVITE = "channel-info/invite/{inviteHash}"
     const val SETTINGS = "settings"
     fun chat(chatId: Long) = "chat/$chatId"
+    fun channelInfo(chatId: Long) = "channel-info/$chatId"
 }
 
 @Composable
@@ -40,8 +46,12 @@ fun NoorConnectNavHost(navController: NavHostController = rememberNavController(
         }
         composable(Routes.AUTH) {
             AuthRoute(onAuthenticated = {
-                navController.navigate(Routes.CHATS) {
-                    popUpTo(Routes.AUTH) { inclusive = true }
+                if (navController.previousBackStackEntry?.destination?.route?.startsWith("channel-info/") == true) {
+                    navController.popBackStack()
+                } else {
+                    navController.navigate(Routes.CHATS) {
+                        popUpTo(Routes.AUTH) { inclusive = true }
+                    }
                 }
             })
         }
@@ -56,7 +66,47 @@ fun NoorConnectNavHost(navController: NavHostController = rememberNavController(
             arguments = listOf(navArgument("chatId") { type = NavType.LongType }),
         ) {
             // ChatViewModel reads "chatId" straight out of SavedStateHandle — no manual passing here.
-            ChatRoute(onOpenChat = { chatId -> navController.navigate(Routes.chat(chatId)) })
+            ChatRoute(
+                onOpenChat = { chatId -> navController.navigate(Routes.chat(chatId)) },
+                onOpenChannelInfo = { chatId -> navController.navigate(Routes.channelInfo(chatId)) },
+            )
+        }
+        composable(
+            route = Routes.CHANNEL_INFO,
+            arguments = listOf(navArgument("channelId") { type = NavType.LongType }),
+        ) {
+            ChannelInfoRoute(
+                onBack = { navController.popBackStack() },
+                onSignIn = { navController.navigate(Routes.AUTH) },
+            )
+        }
+        composable(
+            route = Routes.CHANNEL_INFO_BY_USERNAME,
+            arguments = listOf(navArgument("username") { type = NavType.StringType }),
+            deepLinks = listOf(
+                navDeepLink { uriPattern = "https://t.me/{username}" },
+                navDeepLink { uriPattern = "https://telegram.me/{username}" },
+            ),
+        ) {
+            ChannelInfoRoute(
+                onBack = { navController.popBackStack() },
+                onSignIn = { navController.navigate(Routes.AUTH) },
+            )
+        }
+        composable(
+            route = Routes.CHANNEL_INFO_BY_INVITE,
+            arguments = listOf(navArgument("inviteHash") { type = NavType.StringType }),
+            deepLinks = listOf(
+                navDeepLink { uriPattern = "https://t.me/+{inviteHash}" },
+                navDeepLink { uriPattern = "https://t.me/joinchat/{inviteHash}" },
+                navDeepLink { uriPattern = "https://telegram.me/+{inviteHash}" },
+                navDeepLink { uriPattern = "https://telegram.me/joinchat/{inviteHash}" },
+            ),
+        ) {
+            ChannelInfoRoute(
+                onBack = { navController.popBackStack() },
+                onSignIn = { navController.navigate(Routes.AUTH) },
+            )
         }
         composable(Routes.SETTINGS) {
             SettingsRoute()

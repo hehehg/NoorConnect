@@ -59,6 +59,7 @@ dependencies {
     implementation(project(":feature:onboarding"))
     implementation(project(":feature:chats"))
     implementation(project(":feature:chat"))
+    implementation(project(":feature:channel-info"))
     implementation(project(":feature:moderation"))
     implementation(project(":feature:settings"))
 

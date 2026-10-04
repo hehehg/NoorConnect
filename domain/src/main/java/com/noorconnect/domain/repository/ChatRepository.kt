@@ -2,6 +2,7 @@ package com.noorconnect.domain.repository
 
 import com.noorconnect.core.common.AppResult
 import com.noorconnect.domain.model.Chat
+import com.noorconnect.domain.model.ChannelInfo
 import com.noorconnect.domain.model.ChatReviewInfo
 import com.noorconnect.domain.model.ChatSendPermission
 import com.noorconnect.domain.model.Message
@@ -10,6 +11,16 @@ import kotlinx.coroutines.flow.Flow
 
 interface ChatRepository {
     fun observeChats(): Flow<List<Chat>>
+    suspend fun resolvePublicChannelId(username: String): AppResult<Long>
+    suspend fun resolveChannelInviteId(inviteLink: String): AppResult<Long>
+    suspend fun getChannelInfo(chatId: Long): AppResult<ChannelInfo>
+    suspend fun updateChannelInfo(
+        chatId: Long,
+        title: String,
+        description: String,
+        username: String?,
+        photoPath: String?,
+    ): AppResult<Unit>
     suspend fun getChatReviewInfo(chatId: Long): AppResult<ChatReviewInfo>
     fun observeMessages(chatId: Long): Flow<List<Message>>
     suspend fun loadOlderMessages(chatId: Long, fromMessageId: Long, limit: Int): AppResult<List<Message>>

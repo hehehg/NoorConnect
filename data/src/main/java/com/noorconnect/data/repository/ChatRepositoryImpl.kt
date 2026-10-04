@@ -7,6 +7,7 @@ import com.noorconnect.data.mapper.isInArchiveList
 import com.noorconnect.data.mapper.toDomain
 import com.noorconnect.domain.model.AuthState
 import com.noorconnect.domain.model.Chat
+import com.noorconnect.domain.model.ChannelInfo
 import com.noorconnect.domain.model.ChatReviewInfo
 import com.noorconnect.domain.model.ChatSendPermission
 import com.noorconnect.domain.model.Message
@@ -29,6 +30,10 @@ import kotlinx.coroutines.launch
 import org.drinkless.tdlib.TdApi
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private val channelInviteLinkRegex = Regex(
+    "https://(?:t\\.me|telegram\\.me)/(?:\\+[A-Za-z0-9_-]+|joinchat/[A-Za-z0-9_-]+)/?",
+)
 
 /**
  * @Singleton is load-bearing here, not decoration: this repository holds the live chat-list
@@ -71,6 +76,14 @@ class ChatRepositoryImpl @Inject constructor(
                 is TdApi.UpdateChatLastMessage -> chatsById.update { map ->
                     val chat = map[update.chatId] ?: return@update map
                     map + (chat.id to chat.copy(lastMessage = update.lastMessage?.toDomain()))
+                }
+                is TdApi.UpdateChatTitle -> chatsById.update { map ->
+                    val chat = map[update.chatId] ?: return@update map
+                    map + (chat.id to chat.copy(title = update.title))
+                }
+                is TdApi.UpdateChatPhoto -> chatsById.update { map ->
+                    val chat = map[update.chatId] ?: return@update map
+                    map + (chat.id to chat.copy(photoFileId = update.photo?.small?.id))
                 }
                 is TdApi.UpdateChatReadInbox -> chatsById.update { map ->
                     val chat = map[update.chatId] ?: return@update map
@@ -138,6 +151,174 @@ class ChatRepositoryImpl @Inject constructor(
             compareByDescending<Chat> { it.isPinned }
                 .thenByDescending { it.order }
                 .thenByDescending { it.id },
+        )
+    }
+
+    override suspend fun resolvePublicChannelId(username: String): AppResult<Long> {
+        val normalizedUsername = username.trim().removePrefix("@").trim()
+        if (normalizedUsername.isEmpty()) return AppResult.Failure(400, "رابط القناة غير صالح")
+        return when (val result = tdLib.send(TdApi.SearchPublicChat(normalizedUsername))) {
+            is AppResult.Success -> {
+                val type = result.data.type as? TdApi.ChatTypeSupergroup
+                if (type?.isChannel == true) AppResult.Success(result.data.id)
+                else AppResult.Failure(404, "القناة غير موجودة")
+            }
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+    }
+
+    override suspend fun resolveChannelInviteId(inviteLink: String): AppResult<Long> {
+        if (!inviteLink.matches(channelInviteLinkRegex)) {
+            return AppResult.Failure(400, "رابط دعوة القناة غير صالح")
+        }
+        return when (val result = tdLib.send(TdApi.CheckChatInviteLink(inviteLink))) {
+            is AppResult.Success -> {
+                val info = result.data
+                when {
+                    info.type !is TdApi.InviteLinkChatTypeChannel ->
+                        AppResult.Failure(400, "الرابط لا يشير إلى قناة")
+                    info.chatId == 0L ->
+                        AppResult.Failure(403, "رابط الدعوة لا يمنح هذا الحساب وصولًا مسبقًا للقناة")
+                    else -> AppResult.Success(info.chatId)
+                }
+            }
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+    }
+
+    override suspend fun getChannelInfo(chatId: Long): AppResult<ChannelInfo> {
+        val chat = when (val result = tdLib.send(TdApi.GetChat(chatId))) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+            is AppResult.Loading -> return AppResult.Loading
+        }
+        val supergroupType = chat.type as? TdApi.ChatTypeSupergroup
+            ?: return AppResult.Failure(400, "المحادثة المطلوبة ليست قناة")
+        if (!supergroupType.isChannel) return AppResult.Failure(400, "المحادثة المطلوبة ليست قناة")
+
+        val supergroup = when (val result = tdLib.send(TdApi.GetSupergroup(supergroupType.supergroupId))) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+            is AppResult.Loading -> return AppResult.Loading
+        }
+        val fullInfo = when (val result = tdLib.send(TdApi.GetSupergroupFullInfo(supergroupType.supergroupId))) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+            is AppResult.Loading -> return AppResult.Loading
+        }
+        val permissions = (getChannelPermissions(chatId) as? AppResult.Success)?.data
+            ?: ChannelPermissions(canManage = false, isOwner = false)
+        val username = supergroup.usernames?.activeUsernames?.firstOrNull()?.takeIf { it.isNotBlank() }
+
+        return AppResult.Success(
+            ChannelInfo(
+                chatId = chat.id,
+                title = chat.title,
+                username = username,
+                editableUsername = supergroup.usernames?.editableUsername?.takeIf { it.isNotBlank() },
+                link = username?.let { "https://t.me/$it" }
+                    ?: fullInfo.inviteLink?.inviteLink,
+                description = fullInfo.description.takeIf { it.isNotBlank() },
+                subscriberCount = fullInfo.memberCount.takeIf { it > 0 },
+                photoFileId = fullInfo.photo?.big?.id ?: chat.photo?.big?.id ?: chat.photo?.small?.id,
+                canManage = permissions.canManage,
+                canEditUsername = permissions.isOwner,
+            ),
+        )
+    }
+
+    override suspend fun updateChannelInfo(
+        chatId: Long,
+        title: String,
+        description: String,
+        username: String?,
+        photoPath: String?,
+    ): AppResult<Unit> {
+        val normalizedTitle = title.trim()
+        val normalizedDescription = description.trim()
+        if (normalizedTitle.isEmpty() || normalizedTitle.length > 128) {
+            return AppResult.Failure(400, "اسم القناة يجب أن يكون بين حرف و128 حرفًا")
+        }
+        if (normalizedDescription.length > 255) {
+            return AppResult.Failure(400, "وصف القناة لا يمكن أن يتجاوز 255 حرفًا")
+        }
+
+        val chat = when (val result = tdLib.send(TdApi.GetChat(chatId))) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+            is AppResult.Loading -> return AppResult.Loading
+        }
+        val supergroupType = chat.type as? TdApi.ChatTypeSupergroup
+            ?: return AppResult.Failure(400, "المحادثة المطلوبة ليست قناة")
+        if (!supergroupType.isChannel) return AppResult.Failure(400, "المحادثة المطلوبة ليست قناة")
+
+        val permissions = when (val result = getChannelPermissions(chatId)) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+            is AppResult.Loading -> return AppResult.Loading
+        }
+        if (!permissions.canManage) return AppResult.Failure(403, "ليست لديك صلاحية إدارة هذه القناة")
+        if (username != null && !permissions.isOwner) {
+            return AppResult.Failure(403, "تغيير رابط القناة متاح للمالك فقط")
+        }
+
+        suspend fun perform(function: TdApi.Function<TdApi.Ok>): AppResult<Unit> =
+            when (val result = tdLib.send(function)) {
+                is AppResult.Success -> AppResult.Success(Unit)
+                is AppResult.Failure -> result
+                is AppResult.Loading -> AppResult.Loading
+            }
+
+        perform(TdApi.SetChatTitle(chatId, normalizedTitle)).let {
+            if (it !is AppResult.Success) return it
+        }
+        perform(TdApi.SetChatDescription(chatId, normalizedDescription)).let {
+            if (it !is AppResult.Success) return it
+        }
+        if (photoPath != null) {
+            perform(
+                TdApi.SetChatPhoto(
+                    chatId,
+                    TdApi.InputChatPhotoStatic(TdApi.InputFileLocal(photoPath)),
+                ),
+            ).let { if (it !is AppResult.Success) return it }
+        }
+        if (username != null) {
+            val normalizedUsername = username.trim().removePrefix("@").trim()
+            perform(TdApi.SetSupergroupUsername(supergroupType.supergroupId, normalizedUsername)).let {
+                if (it !is AppResult.Success) return it
+            }
+        }
+        return AppResult.Success(Unit)
+    }
+
+    private data class ChannelPermissions(val canManage: Boolean, val isOwner: Boolean)
+
+    private suspend fun getChannelPermissions(chatId: Long): AppResult<ChannelPermissions> {
+        val myId = when (val result = tdLib.send(TdApi.GetOption("my_id"))) {
+            is AppResult.Success -> (result.data as? TdApi.OptionValueInteger)?.value?.toLong()
+            is AppResult.Failure -> return result
+            is AppResult.Loading -> return AppResult.Loading
+        } ?: return AppResult.Failure(-1, "تعذر التحقق من الحساب الحالي")
+
+        val member = when (
+            val result = tdLib.send(TdApi.GetChatMember(chatId, TdApi.MessageSenderUser(myId))),
+        ) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+            is AppResult.Loading -> return AppResult.Loading
+        }
+        return AppResult.Success(
+            when (val status = member.status) {
+                is TdApi.ChatMemberStatusCreator -> ChannelPermissions(canManage = true, isOwner = true)
+                is TdApi.ChatMemberStatusAdministrator -> ChannelPermissions(
+                    canManage = status.rights?.canChangeInfo == true,
+                    isOwner = false,
+                )
+                else -> ChannelPermissions(canManage = false, isOwner = false)
+            },
         )
     }
 

@@ -22,6 +22,7 @@
 | `feature:auth` | شاشات تسجيل الدخول (Compose) — تعتمد على `domain` فقط |
 | `feature:chats` | شاشة قائمة المحادثات — تعتمد على `domain` فقط |
 | `feature:chat` | شاشة المحادثة الفردية (رسائل + إرسال) |
+| `feature:channel-info` | معلومات القنوات ومشاركتها وتعديلها حسب صلاحيات Telegram |
 | `feature:moderation` | تنفيذ `ContentFilter` — الميزة المميِّزة للمشروع |
 | `feature:settings` | تعديل إعدادات الفلترة، مخزَّنة عبر DataStore |
 | `domain` | Kotlin نقي — نماذج البيانات وواجهات المستودعات وحالات الاستخدام، بلا أي اعتماد على Android أو TDLib |
@@ -126,6 +127,7 @@ moderation_config/banned_words
 | `feature:auth` | ✅ 3 خطوات (هاتف/كود/كلمة مرور) مبنية على `AuthState` |
 | `feature:chats` | ✅ قائمة حقيقية (`LazyColumn`) متصلة بـ `GetChatsUseCase` عبر `ContentFilter` |
 | `feature:chat` | ✅ شاشة محادثة كاملة، `chatId` عبر `SavedStateHandle` |
+| `feature:channel-info` | ✅ معلومات القناة وعدد المشتركين من TDLib، تعديل محمي بصلاحيات القناة، وروابط Telegram العامة ودعوات القنوات المتاحة للحساب |
 | `feature:moderation` | ✅ `IslamicContentFilter` — 3 قواعد (قنوات غير موثّقة، جروبات، كلمات محظورة)، دالة نقية بلا حالة داخلية |
 | `feature:settings` | ✅ تعديل `ModerationSettings` عبر DataStore، ينعكس فوريًا على القائمة (Flow حي عبر `combine`) |
 | مزامنة قائمة المحادثات | ✅ يستمع الآن لـ `UpdateChatLastMessage` و`UpdateChatReadInbox` إضافة إلى `UpdateNewChat` |
