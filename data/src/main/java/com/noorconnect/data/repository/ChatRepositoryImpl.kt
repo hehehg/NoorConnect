@@ -62,11 +62,22 @@ class ChatRepositoryImpl @Inject constructor(
 
     init {
         scope.launch { collectChatUpdates() }
-        scope.launch { loadAllChatsOnceAuthenticated() }
+        scope.launch {
+            tdLib.authState.collect { state ->
+                if (state == AuthState.Ready) loadAllChatsOnceAuthenticated()
+            }
+        }
     }
 
     private suspend fun collectChatUpdates() {
+        var currentAccountId = tdLib.activeAccountId.value
         tdLib.updates.collect { update ->
+            val nextAccountId = tdLib.activeAccountId.value
+            if (nextAccountId != currentAccountId) {
+                chatsById.value = emptyMap()
+                chatPositionsById.value = emptyMap()
+                currentAccountId = nextAccountId
+            }
             when (update) {
                 is TdApi.UpdateNewChat -> {
                     val chat = update.chat.toDomain()
@@ -134,7 +145,6 @@ class ChatRepositoryImpl @Inject constructor(
      * signal for "nothing more to load" — capped so a huge account can't loop forever.
      */
     private suspend fun loadAllChatsOnceAuthenticated() {
-        tdLib.authState.first { it == AuthState.Ready }
         repeat(MAX_LOAD_CHATS_ROUNDS) {
             val result = tdLib.send(TdApi.LoadChats(TdApi.ChatListMain(), CHATS_PER_LOAD_ROUND))
             if (result is AppResult.Failure && result.code == 404) return

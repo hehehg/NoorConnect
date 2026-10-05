@@ -11,11 +11,19 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,15 +35,30 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noorconnect.domain.model.ModerationSettings
+import com.noorconnect.domain.model.AccountSession
 
 /** Public entry point for :app — same pattern as the other feature Routes. */
 @Composable
-fun SettingsRoute() {
+fun SettingsRoute(
+    onAuthenticationRequired: () -> Unit,
+    onAccountSwitched: () -> Unit,
+) {
     val viewModel: SettingsViewModel = hiltViewModel()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val accounts by viewModel.accounts.collectAsStateWithLifecycle()
+    val accountBusy by viewModel.accountBusy.collectAsStateWithLifecycle()
+    val accountError by viewModel.accountError.collectAsStateWithLifecycle()
 
     SettingsScreen(
         settings = settings,
+        accounts = accounts,
+        accountBusy = accountBusy,
+        accountError = accountError,
+        onAddAccount = { viewModel.addAccount(onAuthenticationRequired) },
+        onSwitchAccount = { accountId ->
+            viewModel.switchAccount(accountId, onAuthenticationRequired, onAccountSwitched)
+        },
+        onRemoveAccount = viewModel::removeAccount,
         onAllowUnverifiedChannelsChange = viewModel::setAllowUnverifiedChannels,
         onAllowGroupsChange = viewModel::setAllowGroups,
         onNotificationsEnabledChange = viewModel::setNotificationsEnabled,
@@ -59,6 +82,12 @@ fun SettingsRoute() {
 @Composable
 private fun SettingsScreen(
     settings: ModerationSettings,
+    accounts: List<AccountSession>,
+    accountBusy: Boolean,
+    accountError: String?,
+    onAddAccount: () -> Unit,
+    onSwitchAccount: (String) -> Unit,
+    onRemoveAccount: (String) -> Unit,
     onAllowUnverifiedChannelsChange: (Boolean) -> Unit,
     onAllowGroupsChange: (Boolean) -> Unit,
     onNotificationsEnabledChange: (Boolean) -> Unit,
@@ -77,10 +106,41 @@ private fun SettingsScreen(
     onAddKeyword: (String) -> Unit,
     onRemoveKeyword: (String) -> Unit,
 ) {
+    var accountPendingRemoval by remember { mutableStateOf<AccountSession?>(null) }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
     ) {
         Text("الإعدادات", style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
+
+        SettingsSection("حسابات Telegram")
+        accounts.forEachIndexed { index, account ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(account.phoneNumber ?: "حساب ${index + 1}")
+                    if (account.isActive) {
+                        Text("الحساب الحالي", style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
+                    }
+                }
+                if (!account.isActive) {
+                    IconButton(onClick = { onSwitchAccount(account.id) }, enabled = !accountBusy) {
+                        Icon(Icons.Filled.SwapHoriz, contentDescription = "التبديل إلى هذا الحساب")
+                    }
+                }
+                if (accounts.size > 1) {
+                    IconButton(onClick = { accountPendingRemoval = account }, enabled = !accountBusy) {
+                        Icon(Icons.Filled.Delete, contentDescription = "إزالة الحساب")
+                    }
+                }
+            }
+        }
+        accountError?.let { Text(it, color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
+        Button(onClick = onAddAccount, enabled = !accountBusy && accounts.size < 3) {
+            Icon(Icons.Filled.PersonAdd, contentDescription = null)
+            Text("إضافة حساب", modifier = Modifier.padding(start = 8.dp))
+        }
 
         SettingsSection("الإشعارات")
         SettingRow("الإشعارات", settings.notificationsEnabled, onNotificationsEnabledChange)
@@ -115,6 +175,26 @@ private fun SettingsScreen(
 
         Text("كلمات محظورة", modifier = Modifier.padding(top = 24.dp, bottom = 8.dp))
         KeywordEditor(keywords = settings.blockedKeywords, onAdd = onAddKeyword, onRemove = onRemoveKeyword)
+    }
+
+    accountPendingRemoval?.let { account ->
+        AlertDialog(
+            onDismissRequest = { accountPendingRemoval = null },
+            title = { Text("إزالة الحساب؟") },
+            text = { Text("سيتم حذف بيانات الجلسة المحلية لهذا الحساب من التطبيق.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRemoveAccount(account.id)
+                        accountPendingRemoval = null
+                    },
+                    enabled = !accountBusy,
+                ) { Text("إزالة") }
+            },
+            dismissButton = {
+                TextButton(onClick = { accountPendingRemoval = null }) { Text("إلغاء") }
+            },
+        )
     }
 }
 

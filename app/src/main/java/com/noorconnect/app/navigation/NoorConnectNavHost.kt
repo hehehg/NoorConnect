@@ -142,7 +142,10 @@ fun NoorConnectNavHost(navController: NavHostController = rememberNavController(
             )
         }
         composable(Routes.SETTINGS) {
-            SettingsRoute()
+            SettingsRoute(
+                onAuthenticationRequired = { navController.navigate(Routes.AUTH) },
+                onAccountSwitched = { navController.popBackStack(Routes.CHATS, inclusive = false) },
+            )
         }
     }
 }

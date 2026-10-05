@@ -1,6 +1,7 @@
 package com.noorconnect.data.di
 
 import com.noorconnect.data.repository.AuthRepositoryImpl
+import com.noorconnect.data.repository.AccountSessionRepositoryImpl
 import com.noorconnect.data.repository.ChatModerationRepositoryImpl
 import com.noorconnect.data.repository.ChatRepositoryImpl
 import com.noorconnect.data.repository.FolderRepositoryImpl
@@ -8,6 +9,7 @@ import com.noorconnect.data.repository.ModerationSettingsRepositoryImpl
 import com.noorconnect.data.repository.UserPreferencesRepositoryImpl
 import com.noorconnect.data.repository.UserRepositoryImpl
 import com.noorconnect.domain.repository.AuthRepository
+import com.noorconnect.domain.repository.AccountSessionRepository
 import com.noorconnect.domain.repository.ChatModerationRepository
 import com.noorconnect.domain.repository.ChatRepository
 import com.noorconnect.domain.repository.FolderRepository
@@ -28,6 +30,7 @@ import dagger.hilt.components.SingletonComponent
 abstract class DataModule {
     @Binds abstract fun bindChatRepository(impl: ChatRepositoryImpl): ChatRepository
     @Binds abstract fun bindAuthRepository(impl: AuthRepositoryImpl): AuthRepository
+    @Binds abstract fun bindAccountSessionRepository(impl: AccountSessionRepositoryImpl): AccountSessionRepository
     @Binds abstract fun bindModerationSettingsRepository(impl: ModerationSettingsRepositoryImpl): ModerationSettingsRepository
     @Binds abstract fun bindUserPreferencesRepository(impl: UserPreferencesRepositoryImpl): UserPreferencesRepository
     @Binds abstract fun bindChatModerationRepository(impl: ChatModerationRepositoryImpl): ChatModerationRepository

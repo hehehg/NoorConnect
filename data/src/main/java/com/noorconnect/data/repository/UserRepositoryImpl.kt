@@ -20,7 +20,7 @@ class UserRepositoryImpl @Inject constructor(
     private val tdLib: TdLibManager,
 ) : UserRepository {
 
-    private val cache = mutableMapOf<Long, CachedUser>()
+    private val cache = mutableMapOf<Pair<String, Long>, CachedUser>()
     private val mutex = Mutex() // guards the plain HashMap against concurrent lookups racing
 
     override suspend fun getDisplayName(userId: Long): AppResult<String> =
@@ -51,7 +51,8 @@ class UserRepositoryImpl @Inject constructor(
         }
 
     private suspend fun resolve(userId: Long): AppResult<CachedUser> {
-        mutex.withLock { cache[userId] }?.let { return AppResult.Success(it) }
+        val cacheKey = tdLib.activeAccountId.value to userId
+        mutex.withLock { cache[cacheKey] }?.let { return AppResult.Success(it) }
 
         return when (val result = tdLib.send(TdApi.GetUser(userId))) {
             is AppResult.Success -> {
@@ -63,7 +64,7 @@ class UserRepositoryImpl @Inject constructor(
                 // .small is the low-res version, same choice as ChatMapper makes for chat
                 // photos — an avatar never needs the full-resolution .big version.
                 val cached = CachedUser(displayName = name, username = username, photoFileId = result.data.profilePhoto?.small?.id)
-                mutex.withLock { cache[userId] = cached }
+                mutex.withLock { cache[cacheKey] = cached }
                 AppResult.Success(cached)
             }
             is AppResult.Failure -> result
