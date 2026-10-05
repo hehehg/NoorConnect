@@ -77,6 +77,7 @@ import kotlinx.coroutines.withContext
 fun ChannelInfoRoute(
     onBack: () -> Unit,
     onSignIn: () -> Unit,
+    onOpenChat: (Long) -> Unit = {},
     viewModel: ChannelInfoViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -98,6 +99,9 @@ fun ChannelInfoRoute(
     LaunchedEffect(viewModel) {
         viewModel.messages.collect { snackbarHostState.showSnackbar(it) }
     }
+    LaunchedEffect(viewModel) {
+        viewModel.openChatRequests.collect(onOpenChat)
+    }
     ChannelInfoScreen(
         state = state,
         photoState = photoState,
@@ -108,6 +112,7 @@ fun ChannelInfoRoute(
         onRetry = viewModel::retry,
         onSignIn = onSignIn,
         onSave = viewModel::save,
+        onJoinAndReview = viewModel::joinAndRequestReview,
     )
 }
 
@@ -123,6 +128,7 @@ private fun ChannelInfoScreen(
     onRetry: () -> Unit,
     onSignIn: () -> Unit,
     onSave: (String, String, String?, String?) -> Unit,
+    onJoinAndReview: () -> Unit,
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -203,7 +209,16 @@ private fun ChannelInfoScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (editing) "تعديل القناة" else "معلومات القناة") },
+                title = {
+                    Text(
+                        when {
+                            editing -> "تعديل القناة"
+                            state is ChannelInfoState.JoinRequired -> "الانضمام للمحادثة"
+                            state is ChannelInfoState.ReviewSubmitted -> "قيد المراجعة"
+                            else -> "معلومات القناة"
+                        },
+                    )
+                },
                 navigationIcon = {
                     IconButton(
                         onClick = { if (editing) leaveEditor() else onBack() },
@@ -248,6 +263,16 @@ private fun ChannelInfoScreen(
                 message = state.message,
                 action = "إعادة المحاولة",
                 onAction = onRetry,
+                modifier = Modifier.padding(padding),
+            )
+            is ChannelInfoState.JoinRequired -> JoinRequiredContent(
+                state = state,
+                onJoin = onJoinAndReview,
+                modifier = Modifier.padding(padding),
+            )
+            is ChannelInfoState.ReviewSubmitted -> ReviewSubmittedContent(
+                title = state.title,
+                onBack = onBack,
                 modifier = Modifier.padding(padding),
             )
             is ChannelInfoState.Loaded -> Column(
@@ -412,6 +437,55 @@ private fun ChannelInfoScreen(
             },
             dismissButton = { TextButton(onClick = { showDiscardDialog = false }) { Text("متابعة التعديل") } },
         )
+    }
+}
+
+@Composable
+private fun JoinRequiredContent(
+    state: ChannelInfoState.JoinRequired,
+    onJoin: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxSize().padding(28.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(state.title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+        Spacer(Modifier.size(12.dp))
+        Text(
+            if (state.requiresReview) {
+                "انضم للمحادثة لإرسالها إلى المراجعة. ستظل الرسائل والصورة مخفية حتى الموافقة."
+            } else {
+                "يلزم الانضمام إلى المحادثة قبل فتحها."
+            },
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(20.dp))
+        Button(onClick = onJoin, enabled = !state.isJoining) {
+            if (state.isJoining) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            else Text(if (state.requiresReview) "انضمام وإرسال للمراجعة" else "انضمام")
+        }
+    }
+}
+
+@Composable
+private fun ReviewSubmittedContent(
+    title: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxSize().padding(28.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+        Spacer(Modifier.size(12.dp))
+        Text("تم الانضمام وإرسال المحادثة للمراجعة. ستظهر تفاصيلها بعد الموافقة.", textAlign = TextAlign.Center)
+        Spacer(Modifier.size(20.dp))
+        TextButton(onClick = onBack) { Text("رجوع") }
     }
 }
 

@@ -40,4 +40,5 @@ data class Message(
     val mediaMimeType: String? = null,
     val mediaName: String? = null,
     val photo: MessagePhoto? = null,
+    val videoThumbnail: MessagePhoto? = null,
 )

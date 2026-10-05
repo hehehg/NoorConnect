@@ -22,6 +22,7 @@ import com.noorconnect.domain.usecase.ObserveBannedWordsUseCase
 import com.noorconnect.domain.usecase.ReportChatUseCase
 import com.noorconnect.domain.usecase.ScanMessagesForBannedWordsUseCase
 import com.noorconnect.domain.usecase.SendMessageUseCase
+import com.noorconnect.domain.usecase.SubmitChatForReviewUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -38,6 +40,7 @@ import javax.inject.Inject
 sealed class ChatAccessState {
     data object Checking : ChatAccessState()
     data object Allowed : ChatAccessState()
+    data object FirstMessageAllowed : ChatAccessState()
     data class Denied(val reason: String) : ChatAccessState()
 }
 
@@ -92,6 +95,7 @@ class ChatViewModel @Inject constructor(
     private val getFileState: GetFileStateUseCase,
     private val downloadFile: DownloadFileUseCase,
     private val reportChat: ReportChatUseCase,
+    private val submitChatForReview: SubmitChatForReviewUseCase,
     private val loadOlderMessagesUseCase: LoadOlderMessagesUseCase,
     private val getMessageLink: GetMessageLinkUseCase,
     observeBannedWords: ObserveBannedWordsUseCase,
@@ -163,14 +167,27 @@ class ChatViewModel @Inject constructor(
     // out to have a photo — without this, a sender with NO profile photo would be re-queried on
     // every single message list recomposition instead of just once.
     private val attemptedSenderLookups = mutableSetOf<Long>()
+    private var firstPrivateMessageAttempted = false
 
     init {
         // Gate: runs once per screen open. See CheckChatAccessUseCase for what it checks
         // (moderation status, then audience match against the user's own onboarding gender).
         viewModelScope.launch {
-            _accessState.value = when (val result = checkChatAccess(chatId)) {
-                is CheckChatAccessUseCase.Result.Allowed -> ChatAccessState.Allowed
-                is CheckChatAccessUseCase.Result.Denied -> ChatAccessState.Denied(result.reason)
+            when (val result = checkChatAccess(chatId)) {
+                is CheckChatAccessUseCase.Result.Allowed -> _accessState.value = ChatAccessState.Allowed
+                is CheckChatAccessUseCase.Result.Denied -> _accessState.value = ChatAccessState.Denied(result.reason)
+                CheckChatAccessUseCase.Result.NeedsReview -> {
+                    val currentChat = chat.filterNotNull().first()
+                    if (!currentChat.isChannel && !currentChat.isGroup) {
+                        _accessState.value = ChatAccessState.FirstMessageAllowed
+                    } else {
+                        when (submitChatForReview(chatId, "محادثة جماعية غير معتمدة تحتاج إلى مراجعة")) {
+                            is AppResult.Success -> _accessState.value = ChatAccessState.Denied("هذه المحادثة قيد المراجعة حاليًا")
+                            is AppResult.Failure -> _accessState.value = ChatAccessState.Denied("تعذر إرسال المحادثة للمراجعة")
+                            is AppResult.Loading -> _accessState.value = ChatAccessState.Denied("جار إرسال المحادثة للمراجعة")
+                        }
+                    }
+                }
             }
         }
 
@@ -178,6 +195,18 @@ class ChatViewModel @Inject constructor(
             when (val result = getChatSendPermission(chatId)) {
                 is AppResult.Success -> _sendPermission.value = result.data
                 else -> Unit
+            }
+        }
+
+        viewModelScope.launch {
+            chat.collect { currentChat ->
+                val fileId = currentChat
+                    ?.takeIf { it.isContentVisible }
+                    ?.photoFileId
+                    ?: return@collect
+                if (!_photoStates.value.containsKey(fileId)) {
+                    checkPhotoState(fileId, autoDownload = true)
+                }
             }
         }
 
@@ -206,7 +235,9 @@ class ChatViewModel @Inject constructor(
         // Resolve name + avatar for any sender we haven't looked up yet. One TDLib call
         // (GetUser, via UserRepositoryImpl) backs both — see resolveSender.
         viewModelScope.launch {
-            messages.collect { msgs ->
+            combine(messages, accessState) { msgs, access -> msgs to access }
+                .collect { (msgs, access) ->
+                if (access !is ChatAccessState.Allowed) return@collect
                 val unresolved = msgs
                     .filterNot { it.isOutgoing }
                     .map { it.senderId }
@@ -225,9 +256,15 @@ class ChatViewModel @Inject constructor(
         // placeholder instead. This is the one place that decision is made; ChatScreen never
         // triggers a download on its own initiative, only in response to an explicit tap.
         viewModelScope.launch {
-            combine(messages, chat.filterNotNull()) { msgs, currentChat -> msgs to currentChat }
-                .collect { (msgs, currentChat) ->
+            combine(messages, chat.filterNotNull(), accessState) { msgs, currentChat, access ->
+                Triple(msgs, currentChat, access)
+            }.collect { (msgs, currentChat, access) ->
+                    if (access !is ChatAccessState.Allowed) return@collect
                     val isChannelOrGroup = currentChat.isChannel || currentChat.isGroup
+                    msgs.mapNotNull { it.videoThumbnail?.fileId }.distinct().forEach { fileId ->
+                        if (_photoStates.value.containsKey(fileId)) return@forEach
+                        viewModelScope.launch { checkPhotoState(fileId, autoDownload = true) }
+                    }
                     msgs.mapNotNull { it.mediaFileId }.distinct().forEach { fileId ->
                         if (_photoStates.value.containsKey(fileId)) return@forEach
                         viewModelScope.launch { checkPhotoState(fileId, autoDownload = !isChannelOrGroup) }
@@ -238,19 +275,36 @@ class ChatViewModel @Inject constructor(
 
     fun send(text: String, scheduleDate: Int? = null) {
         if (text.isBlank()) return
+        val isFirstPrivateMessage = _accessState.value is ChatAccessState.FirstMessageAllowed
+        if (isFirstPrivateMessage && (scheduleDate != null || firstPrivateMessageAttempted)) return
+        if (isFirstPrivateMessage) firstPrivateMessageAttempted = true
         viewModelScope.launch {
             when (val result = sendMessage(chatId, text, scheduleDate)) {
                 is AppResult.Success -> {
                     _messageSendState.value = MessageSendState.Idle
                     if (scheduleDate != null) refreshScheduled()
+                    if (isFirstPrivateMessage) {
+                        val submitted = submitChatForReview(chatId, "محادثة شخصية جديدة بعد إرسال رسالتها الأولى")
+                        _accessState.value = ChatAccessState.Denied(
+                            when (submitted) {
+                                is AppResult.Success -> "تم إرسال الرسالة وإحالة المحادثة للمراجعة"
+                                is AppResult.Failure -> "تم إرسال الرسالة لكن تعذرت إحالة المحادثة للمراجعة"
+                                is AppResult.Loading -> "تم إرسال الرسالة وجار إحالة المحادثة للمراجعة"
+                            },
+                        )
+                    }
                 }
-                is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
-                is AppResult.Loading -> Unit
+                is AppResult.Failure -> {
+                    if (isFirstPrivateMessage) firstPrivateMessageAttempted = false
+                    _messageSendState.value = MessageSendState.Failed(result.message)
+                }
+                is AppResult.Loading -> if (isFirstPrivateMessage) firstPrivateMessageAttempted = false
             }
         }
     }
 
     fun sendMedia(path: String, mimeType: String, caption: String, scheduleDate: Int? = null) {
+        if (_accessState.value is ChatAccessState.FirstMessageAllowed) return
         viewModelScope.launch {
             _mediaSendState.value = MediaSendState.Sending
             when (val result = sendMessage.media(chatId, path, mimeType, caption, scheduleDate)) {

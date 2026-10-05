@@ -10,8 +10,8 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 /**
- * The gate every chat passes through before its message list is ever shown — see the ONLY
- * caller, ChatViewModel, which checks this before rendering anything from GetMessagesUseCase.
+ * The gate every chat passes through before its message list is ever shown — see ChatViewModel,
+ * which checks this before rendering anything from GetMessagesUseCase.
  * Runs at chat-open time (not chat-list time): the list itself shows every chat TDLib knows
  * about, and this decides whether tapping into one actually opens it.
  */
@@ -21,6 +21,7 @@ class CheckChatAccessUseCase @Inject constructor(
 ) {
     sealed class Result {
         data object Allowed : Result()
+        data object NeedsReview : Result()
         data class Denied(val reason: String) : Result()
     }
 
@@ -37,10 +38,7 @@ class CheckChatAccessUseCase @Inject constructor(
             is ChatModerationStatus.PendingReview ->
                 Result.Denied(status.reason ?: "هذه المحادثة قيد المراجعة حاليًا")
 
-            ChatModerationStatus.Unreviewed -> {
-                moderationRepository.flagForReview(chatId, "لم تتم مراجعتها بعد")
-                Result.Denied("هذه المحادثة قيد المراجعة حاليًا")
-            }
+            ChatModerationStatus.Unreviewed -> Result.NeedsReview
 
             ChatModerationStatus.Whitelisted -> checkAudience(record.audience)
         }

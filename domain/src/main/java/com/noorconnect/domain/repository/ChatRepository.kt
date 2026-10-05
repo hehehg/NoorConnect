@@ -11,8 +11,9 @@ import kotlinx.coroutines.flow.Flow
 
 interface ChatRepository {
     fun observeChats(): Flow<List<Chat>>
-    suspend fun resolvePublicChannelId(username: String): AppResult<Long>
-    suspend fun resolveChannelInviteId(inviteLink: String): AppResult<Long>
+    suspend fun resolvePublicChat(username: String): AppResult<Chat>
+    suspend fun joinChat(chatId: Long): AppResult<Long>
+    suspend fun joinChatByInviteLink(inviteLink: String): AppResult<Long>
     suspend fun getChannelInfo(chatId: Long): AppResult<ChannelInfo>
     suspend fun updateChannelInfo(
         chatId: Long,

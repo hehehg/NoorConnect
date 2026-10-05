@@ -43,20 +43,25 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Image as ImageIcon
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -70,15 +75,18 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -104,6 +112,7 @@ import com.noorconnect.domain.model.MessagePhoto
 import com.noorconnect.domain.model.ReportReason
 import kotlin.math.absoluteValue
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 private fun ContentResolver.displayName(uri: Uri): String? =
     query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
@@ -146,6 +155,10 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}, onOpenChannelInfo: (Long) -> Unit
     ChatScreen(
         title = chat?.title ?: "محادثة",
         isChannel = chat?.isChannel == true,
+        isGroup = chat?.isGroup == true,
+        isChatContentVisible = chat?.isContentVisible == true,
+        chatPhotoFileId = chat?.takeIf { it.isContentVisible }?.photoFileId,
+        chatPhotoStates = photoStates,
         accessState = accessState,
         messages = messages,
         senderNames = senderNames,
@@ -196,6 +209,10 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}, onOpenChannelInfo: (Long) -> Unit
 private fun ChatScreen(
     title: String,
     isChannel: Boolean,
+    isGroup: Boolean,
+    isChatContentVisible: Boolean,
+    chatPhotoFileId: Int?,
+    chatPhotoStates: Map<Int, PhotoDownloadState>,
     accessState: ChatAccessState,
     messages: List<Message>,
     senderNames: Map<Long, String>,
@@ -229,7 +246,20 @@ private fun ChatScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(title, maxLines = 1) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isChatContentVisible) {
+                            ChatTitleAvatar(
+                                title = title,
+                                isChannel = isChannel,
+                                isGroup = isGroup,
+                                photoState = chatPhotoFileId?.let { chatPhotoStates[it] },
+                            )
+                            Spacer(modifier = Modifier.size(8.dp))
+                        }
+                        Text(title, maxLines = 1)
+                    }
+                },
                 actions = {
                     if (isChannel) {
                         IconButton(onClick = onOpenChannelInfo) {
@@ -250,31 +280,35 @@ private fun ChatScreen(
             when (accessState) {
                 ChatAccessState.Checking -> CheckingContent()
                 is ChatAccessState.Denied -> DeniedContent(reason = accessState.reason)
-                ChatAccessState.Allowed -> ChatContent(
-                    messages = messages,
-                    senderNames = senderNames,
-                    senderUsernames = senderUsernames,
-                    senderPhotoFileIds = senderPhotoFileIds,
-                    photoStates = photoStates,
-                    mediaSendState = mediaSendState,
-                    messageSendState = messageSendState,
-                    canSendMessages = canSendMessages,
-                    sendRestrictionReason = sendRestrictionReason,
-                    draft = draft,
-                    onDraftChange = { draft = it },
-                    scheduledMessages = scheduledMessages,
-                    isLoadingOlder = isLoadingOlder,
-                    hasReachedBeginning = hasReachedBeginning,
-                    onSend = { text, scheduleDate -> onSend(text, scheduleDate); draft = "" },
-                    onSendMedia = onSendMedia,
-                    onEdit = onEdit,
-                    onDelete = onDelete,
-                    onSendScheduledNow = onSendScheduledNow,
-                    onDownloadPhoto = onDownloadPhoto,
-                    onLoadOlderMessages = onLoadOlderMessages,
-                    onShareMessage = onShareMessage,
-                    onOpenPrivateChat = onOpenPrivateChat,
-                )
+                ChatAccessState.Allowed, ChatAccessState.FirstMessageAllowed -> {
+                    val firstMessageOnly = accessState is ChatAccessState.FirstMessageAllowed
+                    ChatContent(
+                        messages = if (firstMessageOnly) emptyList() else messages,
+                        senderNames = senderNames,
+                        senderUsernames = senderUsernames,
+                        senderPhotoFileIds = senderPhotoFileIds,
+                        photoStates = photoStates,
+                        mediaSendState = mediaSendState,
+                        messageSendState = messageSendState,
+                        canSendMessages = canSendMessages,
+                        sendRestrictionReason = sendRestrictionReason,
+                        draft = draft,
+                        onDraftChange = { draft = it },
+                        scheduledMessages = scheduledMessages,
+                        isLoadingOlder = isLoadingOlder,
+                        hasReachedBeginning = hasReachedBeginning,
+                        firstMessageOnly = firstMessageOnly,
+                        onSend = { text, scheduleDate -> onSend(text, scheduleDate); draft = "" },
+                        onSendMedia = onSendMedia,
+                        onEdit = onEdit,
+                        onDelete = onDelete,
+                        onSendScheduledNow = onSendScheduledNow,
+                        onDownloadPhoto = onDownloadPhoto,
+                        onLoadOlderMessages = onLoadOlderMessages,
+                        onShareMessage = onShareMessage,
+                        onOpenPrivateChat = onOpenPrivateChat,
+                    )
+                }
             }
         }
     }
@@ -299,6 +333,43 @@ private fun CheckingContent() {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         CircularProgressIndicator()
+    }
+}
+
+@Composable
+private fun ChatTitleAvatar(
+    title: String,
+    isChannel: Boolean,
+    isGroup: Boolean,
+    photoState: PhotoDownloadState?,
+) {
+    val readyPath = (photoState as? PhotoDownloadState.Ready)?.localPath
+    val bitmap = remember(readyPath) { readyPath?.let(BitmapFactory::decodeFile) }
+    Box(
+        modifier = Modifier.size(36.dp).background(
+            MaterialTheme.colorScheme.secondaryContainer,
+            CircleShape,
+        ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "صورة $title",
+                modifier = Modifier.size(36.dp).clip(CircleShape),
+            )
+        } else {
+            Icon(
+                imageVector = when {
+                    isChannel -> Icons.Filled.Campaign
+                    isGroup -> Icons.Filled.Groups
+                    else -> Icons.Filled.Person
+                },
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
@@ -328,6 +399,7 @@ private fun ChatContent(
     scheduledMessages: List<Message>,
     isLoadingOlder: Boolean,
     hasReachedBeginning: Boolean,
+    firstMessageOnly: Boolean,
     draft: String,
     onDraftChange: (String) -> Unit,
     onSend: (String, Int?) -> Unit,
@@ -387,6 +459,7 @@ private fun ChatContent(
         pendingSavePath = null
     }
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
     var initialScrollDone by remember { mutableStateOf(false) }
     LaunchedEffect(messages.isNotEmpty()) {
         if (messages.isNotEmpty() && !initialScrollDone) {
@@ -394,25 +467,41 @@ private fun ChatContent(
             initialScrollDone = true
         }
     }
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .distinctUntilChanged()
-            .collect { firstVisibleItemIndex ->
-                if (firstVisibleItemIndex <= 2) onLoadOlderMessages()
-            }
+    LaunchedEffect(listState, firstMessageOnly) {
+        if (!firstMessageOnly) {
+            snapshotFlow { listState.firstVisibleItemIndex }
+                .distinctUntilChanged()
+                .collect { firstVisibleItemIndex ->
+                    if (firstVisibleItemIndex <= 2) onLoadOlderMessages()
+                }
+        }
+    }
+    val showJumpToLatest by remember(listState, messages) {
+        derivedStateOf {
+            val latestMessageId = messages.lastOrNull()?.id
+            latestMessageId != null && listState.layoutInfo.visibleItemsInfo.none { it.key == latestMessageId }
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        mediaError?.let { error ->
+        if (firstMessageOnly) {
+            Text(
+                "يمكنك إرسال رسالة واحدة قبل إحالة المحادثة للمراجعة",
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (!firstMessageOnly) mediaError?.let { error ->
             Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
         }
-        (mediaSendState as? MediaSendState.Failed)?.message?.let { error ->
+        if (!firstMessageOnly) (mediaSendState as? MediaSendState.Failed)?.message?.let { error ->
             Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
         }
         (messageSendState as? MessageSendState.Failed)?.message?.let { error ->
             Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
         }
-        if (scheduledMessages.isNotEmpty()) {
+        if (!firstMessageOnly && scheduledMessages.isNotEmpty()) {
             val orderedScheduledMessages = scheduledMessages.sortedBy { it.timestamp }
             Surface(
                 tonalElevation = 2.dp,
@@ -463,56 +552,94 @@ private fun ChatContent(
                 }
             }
         }
-        selectedFileName?.let { name ->
+        if (!firstMessageOnly) selectedFileName?.let { name ->
             Text("تم اختيار الوسائط: $name", modifier = Modifier.padding(horizontal = 12.dp))
         }
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
-        ) {
-            if (isLoadingOlder) {
-                item(key = "loading-older") {
-                    Text(
-                        "جار تحميل الرسائل الأقدم...",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        textAlign = TextAlign.Center,
-                    )
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+            ) {
+                if (isLoadingOlder) {
+                    item(key = "loading-older") {
+                        Text(
+                            "جار تحميل الرسائل الأقدم...",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                } else if (hasReachedBeginning) {
+                    item(key = "beginning") {
+                        Text(
+                            "لقد وصلت إلى بداية القناة",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
-            } else if (hasReachedBeginning) {
-                item(key = "beginning") {
-                    Text(
-                        "لقد وصلت إلى بداية القناة",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        textAlign = TextAlign.Center,
+                items(messages, key = { it.id }) { message ->
+                    val avatarFileId = if (message.isOutgoing) null else senderPhotoFileIds[message.senderId]
+                    MessageBubble(
+                        message = message,
+                        senderName = if (message.isOutgoing) "أنت" else senderNames[message.senderId] ?: "...",
+                        senderUsername = if (message.isOutgoing) null else senderUsernames[message.senderId],
+                        avatarPhotoState = avatarFileId?.let { photoStates[it] },
+                        photoState = message.photo?.let { photoStates[it.fileId] } ?: PhotoDownloadState.NotDownloaded,
+                        videoThumbnailState = message.videoThumbnail?.let { photoStates[it.fileId] }
+                            ?: PhotoDownloadState.NotDownloaded,
+                        photoStates = photoStates,
+                        onDownloadPhoto = { message.photo?.let { onDownloadPhoto(it.fileId) } },
+                        onDownloadVideoThumbnail = {
+                            message.videoThumbnail?.let { onDownloadPhoto(it.fileId) }
+                        },
+                        onDownloadMedia = { message.mediaFileId?.let(onDownloadPhoto) },
+                        onSaveMedia = { path, name ->
+                            pendingSavePath = path
+                            saveFile.launch(name)
+                        },
+                        onOpenPrivateChat = onOpenPrivateChat,
+                        onDelete = onDelete,
+                        onShareMessage = onShareMessage,
                     )
                 }
             }
-            items(messages, key = { it.id }) { message ->
-                val avatarFileId = if (message.isOutgoing) null else senderPhotoFileIds[message.senderId]
-                MessageBubble(
-                    message = message,
-                    senderName = if (message.isOutgoing) "أنت" else senderNames[message.senderId] ?: "...",
-                    senderUsername = if (message.isOutgoing) null else senderUsernames[message.senderId],
-                    avatarPhotoState = avatarFileId?.let { photoStates[it] },
-                    photoState = message.photo?.let { photoStates[it.fileId] } ?: PhotoDownloadState.NotDownloaded,
-                    photoStates = photoStates,
-                    onDownloadPhoto = { message.photo?.let { onDownloadPhoto(it.fileId) } },
-                    onDownloadMedia = { message.mediaFileId?.let(onDownloadPhoto) },
-                    onSaveMedia = { path, name ->
-                        pendingSavePath = path
-                        saveFile.launch(name)
+            if (showJumpToLatest) {
+                SmallFloatingActionButton(
+                    onClick = {
+                        val firstMessageIndex = if (isLoadingOlder || hasReachedBeginning) 1 else 0
+                        coroutineScope.launch {
+                            listState.animateScrollToItem(firstMessageIndex + messages.lastIndex)
+                        }
                     },
-                    onOpenPrivateChat = onOpenPrivateChat,
-                    onDelete = onDelete,
-                    onShareMessage = onShareMessage,
-                )
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ) {
+                    Icon(Icons.Filled.ArrowDownward, contentDescription = "الانتقال لآخر رسالة")
+                }
             }
         }
-        if (canSendMessages) {
+        if (canSendMessages && firstMessageOnly) {
+            Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("اكتب رسالة واحدة...") },
+                )
+                Button(
+                    onClick = { onSend(draft, null) },
+                    enabled = draft.isNotBlank(),
+                    modifier = Modifier.padding(start = 8.dp),
+                ) {
+                    Text("إرسال للمراجعة")
+                }
+            }
+        } else if (canSendMessages) {
             Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { filePicker.launch(arrayOf("image/*", "video/*", "audio/*", "*/*")) }) {
                     Icon(Icons.Filled.AttachFile, contentDescription = "إرفاق ملف")
@@ -597,8 +724,10 @@ private fun MessageBubble(
     senderUsername: String?,
     avatarPhotoState: PhotoDownloadState?,
     photoState: PhotoDownloadState,
+    videoThumbnailState: PhotoDownloadState,
     photoStates: Map<Int, PhotoDownloadState>,
     onDownloadPhoto: () -> Unit,
+    onDownloadVideoThumbnail: () -> Unit,
     onDownloadMedia: () -> Unit,
     onSaveMedia: (String, String) -> Unit,
     onOpenPrivateChat: (Long) -> Unit,
@@ -663,6 +792,14 @@ private fun MessageBubble(
                         }
                     }
                     if (message.text.isNotBlank()) Spacer(modifier = Modifier.size(4.dp))
+                }
+                if (message.mediaType == MessageMediaType.VIDEO) {
+                    Spacer(modifier = Modifier.size(4.dp))
+                    VideoMessageThumbnail(
+                        photo = message.videoThumbnail,
+                        state = videoThumbnailState,
+                        onRetry = onDownloadVideoThumbnail,
+                    )
                 }
                 if (message.text.isNotBlank()) {
                     LinkifiedText(message.text, style = MaterialTheme.typography.bodyMedium)
@@ -790,7 +927,7 @@ private fun MessageBubble(
     }
 }
 
-private val messageUrlRegex = Regex("https?://[^\\s]+")
+private val messageUrlRegex = Regex("(?:https?://[^\\s]+|tg://[^\\s]+)")
 
 @Composable
 private fun LinkifiedText(
@@ -840,6 +977,55 @@ private fun LinkifiedText(
                 }
         },
     )
+}
+
+@Composable
+private fun VideoMessageThumbnail(
+    photo: MessagePhoto?,
+    state: PhotoDownloadState,
+    onRetry: () -> Unit,
+) {
+    val aspectRatio = photo?.let {
+        if (it.height > 0) it.width.toFloat() / it.height.toFloat() else 16f / 9f
+    } ?: 16f / 9f
+    val readyPath = (state as? PhotoDownloadState.Ready)?.localPath
+    val bitmap = remember(readyPath) { readyPath?.let(BitmapFactory::decodeFile) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(aspectRatio)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.Black)
+            .clickable(enabled = photo != null && (state is PhotoDownloadState.NotDownloaded || state is PhotoDownloadState.Failed)) {
+                onRetry()
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null) {
+            Image(bitmap.asImageBitmap(), contentDescription = "معاينة فيديو", modifier = Modifier.fillMaxSize())
+        }
+        if (state is PhotoDownloadState.Downloading) {
+            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+        }
+        Surface(color = Color.Black.copy(alpha = 0.65f), shape = CircleShape) {
+            Icon(
+                Icons.Filled.PlayArrow,
+                contentDescription = "فيديو",
+                tint = Color.White,
+                modifier = Modifier.padding(8.dp).size(28.dp),
+            )
+        }
+        Text(
+            "فيديو",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(8.dp)
+                .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+    }
 }
 
 /**

@@ -9,10 +9,12 @@ import com.noorconnect.domain.model.ChannelInfo
 import com.noorconnect.domain.repository.AuthRepository
 import com.noorconnect.domain.usecase.CheckChatAccessUseCase
 import com.noorconnect.domain.usecase.DownloadFileUseCase
+import com.noorconnect.domain.usecase.GetChatReviewInfoUseCase
 import com.noorconnect.domain.usecase.GetChannelInfoUseCase
 import com.noorconnect.domain.usecase.GetFileStateUseCase
-import com.noorconnect.domain.usecase.ResolveChannelInviteUseCase
-import com.noorconnect.domain.usecase.ResolvePublicChannelUseCase
+import com.noorconnect.domain.usecase.JoinChatUseCase
+import com.noorconnect.domain.usecase.ResolvePublicChatUseCase
+import com.noorconnect.domain.usecase.SubmitChatForReviewUseCase
 import com.noorconnect.domain.usecase.UpdateChannelInfoUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -24,12 +26,22 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 sealed class ChannelInfoState {
     data object Loading : ChannelInfoState()
     data object SignInRequired : ChannelInfoState()
     data class Loaded(val info: ChannelInfo) : ChannelInfoState()
+    data class JoinRequired(
+        val title: String,
+        val chatId: Long? = null,
+        val inviteLink: String? = null,
+        val requiresReview: Boolean = true,
+        val isJoining: Boolean = false,
+    ) : ChannelInfoState()
+    data class ReviewSubmitted(val title: String) : ChannelInfoState()
     data class Error(val message: String) : ChannelInfoState()
 }
 
@@ -45,9 +57,11 @@ class ChannelInfoViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val authRepository: AuthRepository,
     private val checkChatAccess: CheckChatAccessUseCase,
+    private val getChatReviewInfo: GetChatReviewInfoUseCase,
     private val getChannelInfo: GetChannelInfoUseCase,
-    private val resolvePublicChannel: ResolvePublicChannelUseCase,
-    private val resolveChannelInvite: ResolveChannelInviteUseCase,
+    private val joinChat: JoinChatUseCase,
+    private val submitChatForReview: SubmitChatForReviewUseCase,
+    private val resolvePublicChat: ResolvePublicChatUseCase,
     private val updateChannelInfo: UpdateChannelInfoUseCase,
     private val getFileState: GetFileStateUseCase,
     private val downloadFile: DownloadFileUseCase,
@@ -72,6 +86,8 @@ class ChannelInfoViewModel @Inject constructor(
     val messages: SharedFlow<String> = _messages
     private val _saveSuccessEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val saveSuccessEvents: SharedFlow<Unit> = _saveSuccessEvents
+    private val openChatRequestsChannel = Channel<Long>(Channel.BUFFERED)
+    val openChatRequests = openChatRequestsChannel.receiveAsFlow()
 
     init {
         load()
@@ -89,8 +105,16 @@ class ChannelInfoViewModel @Inject constructor(
                     return@launch
                 }
 
-                val chatId = routeChatId ?: routeUsername?.let { username ->
-                    when (val result = resolvePublicChannel(username)) {
+                routeInviteHash?.let { inviteHash ->
+                    _state.value = ChannelInfoState.JoinRequired(
+                        title = "محادثة عبر رابط دعوة",
+                        inviteLink = "https://t.me/+$inviteHash",
+                    )
+                    return@launch
+                }
+
+                val resolvedChat = routeUsername?.let { username ->
+                    when (val result = resolvePublicChat(username)) {
                         is AppResult.Success -> result.data
                         is AppResult.Failure -> {
                             _state.value = ChannelInfoState.Error(result.message.ifBlank { "القناة غير موجودة" })
@@ -101,19 +125,8 @@ class ChannelInfoViewModel @Inject constructor(
                             return@launch
                         }
                     }
-                } ?: routeInviteHash?.let { inviteHash ->
-                    when (val result = resolveChannelInvite("https://t.me/+$inviteHash")) {
-                        is AppResult.Success -> result.data
-                        is AppResult.Failure -> {
-                            _state.value = ChannelInfoState.Error(result.message.ifBlank { "تعذر فتح رابط الدعوة" })
-                            return@launch
-                        }
-                        is AppResult.Loading -> {
-                            _state.value = ChannelInfoState.Error("تعذر تحميل رابط الدعوة")
-                            return@launch
-                        }
-                    }
                 }
+                val chatId = routeChatId ?: resolvedChat?.id
                 if (chatId == null) {
                     _state.value = ChannelInfoState.Error("رابط القناة غير صالح")
                     return@launch
@@ -121,13 +134,35 @@ class ChannelInfoViewModel @Inject constructor(
                 resolvedChatId = chatId
 
                 when (val access = checkChatAccess(chatId)) {
-                    is CheckChatAccessUseCase.Result.Denied -> {
-                        _state.value = ChannelInfoState.Error(access.reason)
+                    is CheckChatAccessUseCase.Result.Denied -> _state.value = ChannelInfoState.Error(access.reason)
+                    CheckChatAccessUseCase.Result.NeedsReview -> {
+                        val chat = resolvedChat
+                        if (chat != null && !chat.isChannel && !chat.isGroup) {
+                            openChatRequestsChannel.send(chat.id)
+                        } else {
+                            _state.value = ChannelInfoState.JoinRequired(
+                                title = chat?.title ?: reviewTitle(chatId),
+                                chatId = chatId,
+                            )
+                        }
+                    }
+                    CheckChatAccessUseCase.Result.Allowed -> {
+                        if (resolvedChat != null) {
+                            if ((!resolvedChat.isChannel && !resolvedChat.isGroup) || resolvedChat.isMember) {
+                                openChatRequestsChannel.send(chatId)
+                            } else {
+                                _state.value = ChannelInfoState.JoinRequired(
+                                    title = resolvedChat.title,
+                                    chatId = chatId,
+                                    requiresReview = false,
+                                )
+                            }
+                        } else {
+                            refreshInfo(chatId)
+                        }
                         return@launch
                     }
-                    CheckChatAccessUseCase.Result.Allowed -> Unit
                 }
-                refreshInfo(chatId)
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: Exception) {
@@ -135,6 +170,42 @@ class ChannelInfoViewModel @Inject constructor(
             }
         }
     }
+
+    fun joinAndRequestReview() {
+        val pending = _state.value as? ChannelInfoState.JoinRequired ?: return
+        if (pending.isJoining) return
+        _state.value = pending.copy(isJoining = true)
+        viewModelScope.launch {
+            val joined = when {
+                pending.inviteLink != null -> joinChat.byInviteLink(pending.inviteLink)
+                pending.chatId != null -> joinChat(pending.chatId)
+                else -> AppResult.Failure(400, "رابط الدعوة غير صالح")
+            }
+            when (joined) {
+                is AppResult.Success -> when (val access = checkChatAccess(joined.data)) {
+                    is CheckChatAccessUseCase.Result.Allowed -> {
+                        openChatRequestsChannel.send(joined.data)
+                        _state.value = ChannelInfoState.Loading
+                    }
+                    is CheckChatAccessUseCase.Result.Denied -> _state.value = ChannelInfoState.Error(access.reason)
+                    CheckChatAccessUseCase.Result.NeedsReview -> {
+                        when (val submitted = submitChatForReview(joined.data, "محادثة جماعية جديدة بعد الانضمام")) {
+                            is AppResult.Success -> _state.value = ChannelInfoState.ReviewSubmitted(
+                                if (pending.title == "محادثة عبر رابط دعوة") reviewTitle(joined.data) else pending.title,
+                            )
+                            is AppResult.Failure -> _state.value = ChannelInfoState.Error(submitted.message)
+                            is AppResult.Loading -> _state.value = ChannelInfoState.Error("تعذر إرسال المحادثة للمراجعة")
+                        }
+                    }
+                }
+                is AppResult.Failure -> _state.value = ChannelInfoState.Error(joined.message)
+                is AppResult.Loading -> _state.value = pending.copy(isJoining = false)
+            }
+        }
+    }
+
+    private suspend fun reviewTitle(chatId: Long): String =
+        (getChatReviewInfo(chatId) as? AppResult.Success)?.data?.title ?: "المحادثة"
 
     private suspend fun refreshInfo(chatId: Long) {
         when (val result = getChannelInfo(chatId)) {

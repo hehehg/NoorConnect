@@ -28,6 +28,7 @@ private object Routes {
     const val CHAT = "chat/{chatId}"
     const val CHANNEL_INFO = "channel-info/{channelId}"
     const val CHANNEL_INFO_BY_USERNAME = "channel-info/username/{username}"
+    const val CHANNEL_INFO_BY_POST = "channel-info/post/{username}/{messageId}"
     const val CHANNEL_INFO_BY_INVITE = "channel-info/invite/{inviteHash}"
     const val SETTINGS = "settings"
     fun chat(chatId: Long) = "chat/$chatId"
@@ -78,6 +79,7 @@ fun NoorConnectNavHost(navController: NavHostController = rememberNavController(
             ChannelInfoRoute(
                 onBack = { navController.popBackStack() },
                 onSignIn = { navController.navigate(Routes.AUTH) },
+                onOpenChat = { chatId -> navController.navigate(Routes.chat(chatId)) },
             )
         }
         composable(
@@ -86,11 +88,31 @@ fun NoorConnectNavHost(navController: NavHostController = rememberNavController(
             deepLinks = listOf(
                 navDeepLink { uriPattern = "https://t.me/{username}" },
                 navDeepLink { uriPattern = "https://telegram.me/{username}" },
+                navDeepLink { uriPattern = "tg://resolve?domain={username}" },
             ),
         ) {
             ChannelInfoRoute(
                 onBack = { navController.popBackStack() },
                 onSignIn = { navController.navigate(Routes.AUTH) },
+                onOpenChat = { chatId -> navController.navigate(Routes.chat(chatId)) },
+            )
+        }
+        composable(
+            route = Routes.CHANNEL_INFO_BY_POST,
+            arguments = listOf(
+                navArgument("username") { type = NavType.StringType },
+                navArgument("messageId") { type = NavType.LongType },
+            ),
+            deepLinks = listOf(
+                navDeepLink { uriPattern = "https://t.me/{username}/{messageId}" },
+                navDeepLink { uriPattern = "https://telegram.me/{username}/{messageId}" },
+                navDeepLink { uriPattern = "tg://resolve?domain={username}&post={messageId}" },
+            ),
+        ) {
+            ChannelInfoRoute(
+                onBack = { navController.popBackStack() },
+                onSignIn = { navController.navigate(Routes.AUTH) },
+                onOpenChat = { chatId -> navController.navigate(Routes.chat(chatId)) },
             )
         }
         composable(
@@ -101,11 +123,13 @@ fun NoorConnectNavHost(navController: NavHostController = rememberNavController(
                 navDeepLink { uriPattern = "https://t.me/joinchat/{inviteHash}" },
                 navDeepLink { uriPattern = "https://telegram.me/+{inviteHash}" },
                 navDeepLink { uriPattern = "https://telegram.me/joinchat/{inviteHash}" },
+                navDeepLink { uriPattern = "tg://join?invite={inviteHash}" },
             ),
         ) {
             ChannelInfoRoute(
                 onBack = { navController.popBackStack() },
                 onSignIn = { navController.navigate(Routes.AUTH) },
+                onOpenChat = { chatId -> navController.navigate(Routes.chat(chatId)) },
             )
         }
         composable(Routes.SETTINGS) {

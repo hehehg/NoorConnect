@@ -154,38 +154,64 @@ class ChatRepositoryImpl @Inject constructor(
         )
     }
 
-    override suspend fun resolvePublicChannelId(username: String): AppResult<Long> {
+    override suspend fun resolvePublicChat(username: String): AppResult<Chat> {
         val normalizedUsername = username.trim().removePrefix("@").trim()
         if (normalizedUsername.isEmpty()) return AppResult.Failure(400, "رابط القناة غير صالح")
         return when (val result = tdLib.send(TdApi.SearchPublicChat(normalizedUsername))) {
             is AppResult.Success -> {
-                val type = result.data.type as? TdApi.ChatTypeSupergroup
-                if (type?.isChannel == true) AppResult.Success(result.data.id)
-                else AppResult.Failure(404, "القناة غير موجودة")
+                when (result.data.type) {
+                    is TdApi.ChatTypeSupergroup, is TdApi.ChatTypeBasicGroup, is TdApi.ChatTypePrivate -> {
+                        cacheChat(result.data)
+                        AppResult.Success(result.data.toDomain())
+                    }
+                    else -> AppResult.Failure(404, "المحادثة غير موجودة")
+                }
             }
             is AppResult.Failure -> result
             is AppResult.Loading -> AppResult.Loading
         }
     }
 
-    override suspend fun resolveChannelInviteId(inviteLink: String): AppResult<Long> {
-        if (!inviteLink.matches(channelInviteLinkRegex)) {
-            return AppResult.Failure(400, "رابط دعوة القناة غير صالح")
+    override suspend fun joinChat(chatId: Long): AppResult<Long> {
+        val chat = when (val result = tdLib.send(TdApi.GetChat(chatId))) {
+            is AppResult.Success -> result.data
+            is AppResult.Failure -> return result
+            is AppResult.Loading -> return AppResult.Loading
         }
-        return when (val result = tdLib.send(TdApi.CheckChatInviteLink(inviteLink))) {
-            is AppResult.Success -> {
-                val info = result.data
-                when {
-                    info.type !is TdApi.InviteLinkChatTypeChannel ->
-                        AppResult.Failure(400, "الرابط لا يشير إلى قناة")
-                    info.chatId == 0L ->
-                        AppResult.Failure(403, "رابط الدعوة لا يمنح هذا الحساب وصولًا مسبقًا للقناة")
-                    else -> AppResult.Success(info.chatId)
-                }
-            }
+        cacheChat(chat)
+        if (!chat.positions.isNullOrEmpty()) return AppResult.Success(chatId)
+        return when (val result = tdLib.send(TdApi.JoinChat(chatId))) {
+            is AppResult.Success -> result.data.toJoinedChatId()
             is AppResult.Failure -> result
             is AppResult.Loading -> AppResult.Loading
         }
+    }
+
+    override suspend fun joinChatByInviteLink(inviteLink: String): AppResult<Long> {
+        if (!inviteLink.matches(channelInviteLinkRegex)) {
+            return AppResult.Failure(400, "رابط الدعوة غير صالح")
+        }
+        return when (val result = tdLib.send(TdApi.JoinChatByInviteLink(inviteLink))) {
+            is AppResult.Success -> result.data.toJoinedChatId()
+            is AppResult.Failure -> result
+            is AppResult.Loading -> AppResult.Loading
+        }
+    }
+
+    private suspend fun TdApi.ChatJoinResult.toJoinedChatId(): AppResult<Long> = when (this) {
+        is TdApi.ChatJoinResultSuccess -> {
+            val joinedChat = tdLib.send(TdApi.GetChat(chatId))
+            if (joinedChat is AppResult.Success) cacheChat(joinedChat.data)
+            AppResult.Success(chatId)
+        }
+        is TdApi.ChatJoinResultRequestSent -> AppResult.Failure(202, "تم إرسال طلب الانضمام إلى مشرفي المجموعة")
+        else -> AppResult.Failure(403, "تعذر الانضمام إلى المحادثة")
+    }
+
+    private fun cacheChat(chat: TdApi.Chat) {
+        val domainChat = chat.toDomain()
+        chatPositionsById.update { it + (chat.id to chat.positions?.filterNotNull().orEmpty()) }
+        chatsById.update { it + (chat.id to domainChat) }
     }
 
     override suspend fun getChannelInfo(chatId: Long): AppResult<ChannelInfo> {

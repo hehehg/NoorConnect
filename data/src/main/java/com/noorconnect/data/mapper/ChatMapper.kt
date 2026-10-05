@@ -140,5 +140,17 @@ fun TdApi.Message.toDomain(): Message {
             ?.filterNotNull()
             ?.maxByOrNull { it.width }
             ?.let { size -> MessagePhoto(fileId = size.photo.id, width = size.width, height = size.height) },
+        videoThumbnail = when (messageContent) {
+            is TdApi.MessageVideo -> messageContent.video?.thumbnail
+            is TdApi.MessageAnimation -> messageContent.animation?.thumbnail
+            is TdApi.MessageVideoNote -> messageContent.videoNote?.thumbnail
+            else -> null
+        }?.let { thumbnail ->
+            MessagePhoto(
+                fileId = thumbnail.file.id,
+                width = thumbnail.width,
+                height = thumbnail.height,
+            )
+        },
     )
 }
