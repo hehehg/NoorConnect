@@ -304,7 +304,7 @@ class ChatRepositoryImpl @Inject constructor(
         } ?: return AppResult.Failure(-1, "تعذر التحقق من الحساب الحالي")
 
         val member = when (
-            val result = tdLib.send(TdApi.GetChatMember(chatId, TdApi.MessageSenderUser(myId))),
+            val result = tdLib.send(TdApi.GetChatMember(chatId, TdApi.MessageSenderUser(myId)))
         ) {
             is AppResult.Success -> result.data
             is AppResult.Failure -> return result
