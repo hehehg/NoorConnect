@@ -118,6 +118,7 @@ class ScheduledMessagesViewModel @Inject constructor(
             } finally {
                 _workingMessageId.value = null
             }
+        }
     }
 }
 
