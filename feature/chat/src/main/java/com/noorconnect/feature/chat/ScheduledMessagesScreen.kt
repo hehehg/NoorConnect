@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -148,6 +149,7 @@ fun ScheduledMessagesRoute(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun ScheduledMessagesScreen(
     messages: List<ScheduledChatMessage>,
     isLoading: Boolean,
