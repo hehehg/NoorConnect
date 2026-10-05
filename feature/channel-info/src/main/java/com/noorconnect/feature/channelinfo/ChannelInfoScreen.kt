@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -111,6 +112,7 @@ fun ChannelInfoRoute(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun ChannelInfoScreen(
     state: ChannelInfoState,
     photoState: ChannelPhotoState,
