@@ -157,9 +157,6 @@ class ChatViewModel @Inject constructor(
     private val _reportState = MutableStateFlow<ReportState>(ReportState.Idle)
     val reportState: StateFlow<ReportState> = _reportState
 
-    private val _scheduledMessages = MutableStateFlow<List<Message>>(emptyList())
-    val scheduledMessages: StateFlow<List<Message>> = _scheduledMessages
-
     private val _sendPermission = MutableStateFlow<com.noorconnect.domain.model.ChatSendPermission?>(null)
     val sendPermission: StateFlow<com.noorconnect.domain.model.ChatSendPermission?> = _sendPermission
 
@@ -207,13 +204,6 @@ class ChatViewModel @Inject constructor(
                 if (!_photoStates.value.containsKey(fileId)) {
                     checkPhotoState(fileId, autoDownload = true)
                 }
-            }
-        }
-
-        viewModelScope.launch {
-            when (val result = sendMessage.scheduled(chatId)) {
-                is AppResult.Success -> _scheduledMessages.value = result.data
-                else -> Unit
             }
         }
 
@@ -282,7 +272,6 @@ class ChatViewModel @Inject constructor(
             when (val result = sendMessage(chatId, text, scheduleDate)) {
                 is AppResult.Success -> {
                     _messageSendState.value = MessageSendState.Idle
-                    if (scheduleDate != null) refreshScheduled()
                     if (isFirstPrivateMessage) {
                         val submitted = submitChatForReview(chatId, "محادثة شخصية جديدة بعد إرسال رسالتها الأولى")
                         _accessState.value = ChatAccessState.Denied(
@@ -310,7 +299,6 @@ class ChatViewModel @Inject constructor(
             when (val result = sendMessage.media(chatId, path, mimeType, caption, scheduleDate)) {
                 is AppResult.Success -> {
                     _mediaSendState.value = MediaSendState.Idle
-                    if (scheduleDate != null) refreshScheduled()
                 }
                 is AppResult.Failure -> _mediaSendState.value = MediaSendState.Failed(result.message)
                 is AppResult.Loading -> _mediaSendState.value = MediaSendState.Sending
@@ -324,7 +312,6 @@ class ChatViewModel @Inject constructor(
             when (val result = sendMessage.edit(chatId, messageId, text)) {
                 is AppResult.Success -> {
                     _messageSendState.value = MessageSendState.Idle
-                    refreshScheduled()
                 }
                 is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
                 is AppResult.Loading -> Unit
@@ -335,7 +322,7 @@ class ChatViewModel @Inject constructor(
     fun delete(messageId: Long) {
         viewModelScope.launch {
             when (val result = sendMessage.delete(chatId, messageId)) {
-                is AppResult.Success -> refreshScheduled()
+                is AppResult.Success -> Unit
                 is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
                 is AppResult.Loading -> Unit
             }
@@ -373,23 +360,6 @@ class ChatViewModel @Inject constructor(
                 is AppResult.Failure -> Unit
                 is AppResult.Loading -> Unit
             }
-        }
-    }
-
-    fun sendScheduledNow(messageId: Long) {
-        viewModelScope.launch {
-            when (val result = sendMessage.sendScheduledNow(chatId, messageId)) {
-                is AppResult.Success -> refreshScheduled()
-                is AppResult.Failure -> _messageSendState.value = MessageSendState.Failed(result.message)
-                is AppResult.Loading -> Unit
-            }
-        }
-    }
-
-    private suspend fun refreshScheduled() {
-        when (val result = sendMessage.scheduled(chatId)) {
-            is AppResult.Success -> _scheduledMessages.value = result.data
-            else -> Unit
         }
     }
 

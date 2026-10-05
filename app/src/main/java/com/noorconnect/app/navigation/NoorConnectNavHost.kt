@@ -10,6 +10,7 @@ import androidx.navigation.navDeepLink
 import androidx.navigation.navArgument
 import com.noorconnect.feature.auth.AuthRoute
 import com.noorconnect.feature.chat.ChatRoute
+import com.noorconnect.feature.chat.ScheduledMessagesRoute
 import com.noorconnect.feature.channelinfo.ChannelInfoRoute
 import com.noorconnect.feature.chats.ChatsRoute
 import com.noorconnect.feature.onboarding.OnboardingRoute
@@ -26,6 +27,7 @@ private object Routes {
     const val AUTH = "auth"
     const val CHATS = "chats"
     const val CHAT = "chat/{chatId}"
+    const val SCHEDULED_MESSAGES = "scheduled-messages"
     const val CHANNEL_INFO = "channel-info/{channelId}"
     const val CHANNEL_INFO_BY_USERNAME = "channel-info/username/{username}"
     const val CHANNEL_INFO_BY_POST = "channel-info/post/{username}/{messageId}"
@@ -60,6 +62,13 @@ fun NoorConnectNavHost(navController: NavHostController = rememberNavController(
             ChatsRoute(
                 onOpenChat = { chatId -> navController.navigate(Routes.chat(chatId)) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                onOpenScheduledMessages = { navController.navigate(Routes.SCHEDULED_MESSAGES) },
+            )
+        }
+        composable(Routes.SCHEDULED_MESSAGES) {
+            ScheduledMessagesRoute(
+                onBack = { navController.popBackStack() },
+                onOpenChat = { chatId -> navController.navigate(Routes.chat(chatId)) },
             )
         }
         composable(

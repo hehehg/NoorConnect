@@ -41,4 +41,5 @@ data class Message(
     val mediaName: String? = null,
     val photo: MessagePhoto? = null,
     val videoThumbnail: MessagePhoto? = null,
+    val scheduledAt: Long? = null,
 )

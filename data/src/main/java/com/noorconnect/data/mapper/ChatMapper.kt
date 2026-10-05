@@ -98,6 +98,9 @@ fun TdApi.Message.toDomain(): Message {
         senderId = (senderId as? TdApi.MessageSenderUser)?.userId ?: 0L,
         text = text,
         timestamp = date.toLong(),
+        scheduledAt = (schedulingState as? TdApi.MessageSchedulingStateSendAtDate)
+            ?.sendDate
+            ?.toLong(),
         isOutgoing = isOutgoing,
         replyTo = replyText?.takeIf { it.isNotBlank() }?.let { MessageReplyPreview(text = it) },
         mediaType = mediaType,

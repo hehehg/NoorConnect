@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -52,13 +51,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Image as ImageIcon
@@ -71,7 +67,6 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -147,7 +142,6 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}, onOpenChannelInfo: (Long) -> Unit
     val mediaSendState by viewModel.mediaSendState.collectAsStateWithLifecycle()
     val messageSendState by viewModel.messageSendState.collectAsStateWithLifecycle()
     val reportState by viewModel.reportState.collectAsStateWithLifecycle()
-    val scheduledMessages by viewModel.scheduledMessages.collectAsStateWithLifecycle()
     val sendPermission by viewModel.sendPermission.collectAsStateWithLifecycle()
     val isLoadingOlder by viewModel.isLoadingOlder.collectAsStateWithLifecycle()
     val hasReachedBeginning by viewModel.hasReachedBeginning.collectAsStateWithLifecycle()
@@ -170,14 +164,12 @@ fun ChatRoute(onOpenChat: (Long) -> Unit = {}, onOpenChannelInfo: (Long) -> Unit
         canSendMessages = sendPermission?.canSend ?: chat?.canSendMessages ?: true,
         sendRestrictionReason = sendPermission?.reason ?: chat?.sendRestrictionReason,
         reportState = reportState,
-        scheduledMessages = scheduledMessages,
         isLoadingOlder = isLoadingOlder,
         hasReachedBeginning = hasReachedBeginning,
         onSend = viewModel::send,
         onSendMedia = viewModel::sendMedia,
         onEdit = viewModel::edit,
         onDelete = viewModel::delete,
-        onSendScheduledNow = viewModel::sendScheduledNow,
         onDownloadPhoto = viewModel::downloadPhoto,
         onLoadOlderMessages = viewModel::loadOlderMessages,
         onShareMessage = viewModel::shareMessage,
@@ -224,14 +216,12 @@ private fun ChatScreen(
     canSendMessages: Boolean,
     sendRestrictionReason: String?,
     reportState: ReportState,
-    scheduledMessages: List<Message>,
     isLoadingOlder: Boolean,
     hasReachedBeginning: Boolean,
     onSend: (String, Int?) -> Unit,
     onSendMedia: (String, String, String, Int?) -> Unit,
     onEdit: (Long, String) -> Unit,
     onDelete: (Long) -> Unit,
-    onSendScheduledNow: (Long) -> Unit,
     onDownloadPhoto: (Int) -> Unit,
     onLoadOlderMessages: () -> Unit,
     onShareMessage: (Long) -> Unit,
@@ -294,7 +284,6 @@ private fun ChatScreen(
                         sendRestrictionReason = sendRestrictionReason,
                         draft = draft,
                         onDraftChange = { draft = it },
-                        scheduledMessages = scheduledMessages,
                         isLoadingOlder = isLoadingOlder,
                         hasReachedBeginning = hasReachedBeginning,
                         firstMessageOnly = firstMessageOnly,
@@ -302,7 +291,6 @@ private fun ChatScreen(
                         onSendMedia = onSendMedia,
                         onEdit = onEdit,
                         onDelete = onDelete,
-                        onSendScheduledNow = onSendScheduledNow,
                         onDownloadPhoto = onDownloadPhoto,
                         onLoadOlderMessages = onLoadOlderMessages,
                         onShareMessage = onShareMessage,
@@ -396,7 +384,6 @@ private fun ChatContent(
     messageSendState: MessageSendState,
     canSendMessages: Boolean,
     sendRestrictionReason: String?,
-    scheduledMessages: List<Message>,
     isLoadingOlder: Boolean,
     hasReachedBeginning: Boolean,
     firstMessageOnly: Boolean,
@@ -406,7 +393,6 @@ private fun ChatContent(
     onSendMedia: (String, String, String, Int?) -> Unit,
     onEdit: (Long, String) -> Unit,
     onDelete: (Long) -> Unit,
-    onSendScheduledNow: (Long) -> Unit,
     onDownloadPhoto: (Int) -> Unit,
     onLoadOlderMessages: () -> Unit,
     onShareMessage: (Long) -> Unit,
@@ -420,7 +406,6 @@ private fun ChatContent(
     var mediaError by remember { mutableStateOf<String?>(null) }
     var scheduleDate by remember { mutableStateOf<Int?>(null) }
     var editingMessage by remember { mutableStateOf<Message?>(null) }
-    var scheduledExpanded by remember { mutableStateOf(false) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         val resolver = context.contentResolver
@@ -500,57 +485,6 @@ private fun ChatContent(
         }
         (messageSendState as? MessageSendState.Failed)?.message?.let { error ->
             Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
-        }
-        if (!firstMessageOnly && scheduledMessages.isNotEmpty()) {
-            val orderedScheduledMessages = scheduledMessages.sortedBy { it.timestamp }
-            Surface(
-                tonalElevation = 2.dp,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-            ) {
-                Column {
-                    ListItem(
-                        leadingContent = { Icon(Icons.Filled.PushPin, contentDescription = "الرسائل المجدولة") },
-                        headlineContent = { Text("الرسائل المجدولة (${orderedScheduledMessages.size})") },
-                        supportingContent = {
-                            Text(
-                                orderedScheduledMessages.first().text.ifBlank { "مرفق مجدول" },
-                                maxLines = 1,
-                            )
-                        },
-                        trailingContent = {
-                            IconButton(onClick = { scheduledExpanded = !scheduledExpanded }) {
-                                Icon(
-                                    if (scheduledExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                    contentDescription = if (scheduledExpanded) "طي الرسائل المجدولة" else "عرض الرسائل المجدولة",
-                                )
-                            }
-                        },
-                    )
-                    if (scheduledExpanded) {
-                        LazyColumn(modifier = Modifier.heightIn(max = 240.dp)) {
-                            items(orderedScheduledMessages, key = { it.id }) { scheduled ->
-                                ListItem(
-                                    headlineContent = {
-                                        Text(scheduled.text.ifBlank { "مرفق مجدول" }, maxLines = 1)
-                                    },
-                                    supportingContent = {
-                                        Text("موعد الإرسال: ${formatMessageTimestamp(scheduled.timestamp)}")
-                                    },
-                                    trailingContent = {
-                                        Row {
-                                            TextButton(onClick = { onSendScheduledNow(scheduled.id) }) {
-                                                Text("إرسال الآن")
-                                            }
-                                            TextButton(onClick = { editingMessage = scheduled }) { Text("تعديل") }
-                                            TextButton(onClick = { onDelete(scheduled.id) }) { Text("حذف") }
-                                        }
-                                    },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         }
         if (!firstMessageOnly) selectedFileName?.let { name ->
             Text("تم اختيار الوسائط: $name", modifier = Modifier.padding(horizontal = 12.dp))

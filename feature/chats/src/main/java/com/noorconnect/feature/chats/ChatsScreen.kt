@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -65,7 +66,7 @@ import kotlin.math.absoluteValue
 
 /** Public entry point for :app — same pattern as AuthRoute. */
 @Composable
-fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
+fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit, onOpenScheduledMessages: () -> Unit) {
     val viewModel: ChatsViewModel = hiltViewModel()
     val chats by viewModel.visibleChats.collectAsStateWithLifecycle()
     val archivedChats by viewModel.archivedChats.collectAsStateWithLifecycle()
@@ -90,6 +91,7 @@ fun ChatsRoute(onOpenChat: (Long) -> Unit, onOpenSettings: () -> Unit) {
         chatPhotoStates = chatPhotoStates,
         onOpenChat = onOpenChat,
         onOpenSettings = onOpenSettings,
+        onOpenScheduledMessages = onOpenScheduledMessages,
         onSelectFolder = viewModel::selectFolder,
         onCreateFolder = viewModel::createFolder,
         onRenameFolder = viewModel::renameFolder,
@@ -120,6 +122,7 @@ private fun ChatsScreen(
     chatPhotoStates: Map<Int, ChatPhotoDownloadState>,
     onOpenChat: (Long) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenScheduledMessages: () -> Unit,
     onSelectFolder: (String?) -> Unit,
     onCreateFolder: (String) -> Unit,
     onRenameFolder: (String, String) -> Unit,
@@ -147,6 +150,9 @@ private fun ChatsScreen(
                 TopAppBar(
                     title = { Text("المحادثات") },
                     actions = {
+                        IconButton(onClick = onOpenScheduledMessages) {
+                            Icon(Icons.Filled.Schedule, contentDescription = "الرسائل المجدولة")
+                        }
                         IconButton(onClick = onOpenSearch) {
                             Icon(Icons.Filled.Search, contentDescription = "بحث")
                         }
