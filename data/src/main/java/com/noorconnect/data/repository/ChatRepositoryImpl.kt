@@ -222,7 +222,12 @@ class ChatRepositoryImpl @Inject constructor(
                     ?: fullInfo.inviteLink?.inviteLink,
                 description = fullInfo.description.takeIf { it.isNotBlank() },
                 subscriberCount = fullInfo.memberCount.takeIf { it > 0 },
-                photoFileId = fullInfo.photo?.big?.id ?: chat.photo?.big?.id ?: chat.photo?.small?.id,
+                photoFileId = fullInfo.photo?.sizes
+                    ?.filterNotNull()
+                    ?.maxByOrNull { it.width }
+                    ?.photo?.id
+                    ?: chat.photo?.big?.id
+                    ?: chat.photo?.small?.id,
                 canManage = permissions.canManage,
                 canEditUsername = permissions.isOwner,
             ),
