@@ -94,24 +94,35 @@ function Test-LaunchWithoutSystemJava([string]$Launcher) {
     $originalJdkHome = $env:JDK_HOME
     $originalPath = $env:PATH
     $process = $null
-    $stdoutPath = [System.IO.Path]::GetTempFileName()
-    $stderrPath = [System.IO.Path]::GetTempFileName()
     try {
         Remove-Item Env:JAVA_HOME -ErrorAction SilentlyContinue
         Remove-Item Env:JDK_HOME -ErrorAction SilentlyContinue
         $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
 
-        $process = Start-Process -FilePath $Launcher -ArgumentList "--verbose" -PassThru `
-            -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $Launcher
+        $startInfo.WorkingDirectory = Split-Path $Launcher -Parent
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.ArgumentList.Add("--verbose")
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        if (-not $process.Start()) {
+            throw "Failed to start application launcher: $Launcher"
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         $exited = $process.WaitForExit(15000)
         if (-not $exited) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            $process.Kill($true)
             $process.WaitForExit()
         }
 
         $launchOutput = @(
-            [System.IO.File]::ReadAllText($stdoutPath)
-            [System.IO.File]::ReadAllText($stderrPath)
+            $stdoutTask.GetAwaiter().GetResult()
+            $stderrTask.GetAwaiter().GetResult()
         ) -join [Environment]::NewLine
         if ($launchOutput -match '(?i)VerifyError|Failed to launch JVM|Exception in thread') {
             throw "Application launcher reported a JVM/application startup error:`n$launchOutput"
@@ -122,15 +133,14 @@ function Test-LaunchWithoutSystemJava([string]$Launcher) {
         Write-Output "Application launcher remained running without JAVA_HOME, JDK_HOME, or Java on PATH and reported no startup exception."
     } finally {
         if ($process) {
-            $process.Refresh()
             if (-not $process.HasExited) {
-                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                $process.Kill($true)
             }
+            $process.Dispose()
         }
         $env:JAVA_HOME = $originalJavaHome
         $env:JDK_HOME = $originalJdkHome
         $env:PATH = $originalPath
-        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
     }
 }
 
