@@ -96,13 +96,15 @@ class ScheduledMessagesViewModel @Inject constructor(
         }
     }
 
-    fun sendNow(item: ScheduledChatMessage) = perform(item) {
-        sendMessage.sendScheduledNow(item.chatId, item.message.id)
-    }
+    fun sendNow(item: ScheduledChatMessage) = perform(
+        item = item,
+        action = { sendMessage.sendScheduledNow(item.chatId, item.message.id) },
+    )
 
-    fun delete(item: ScheduledChatMessage) = perform(item) {
-        sendMessage.delete(item.chatId, item.message.id)
-    }
+    fun delete(item: ScheduledChatMessage) = perform(
+        item = item,
+        action = { sendMessage.delete(item.chatId, item.message.id) },
+    )
 
     fun edit(item: ScheduledChatMessage, text: String) {
         _editCompletedKey.value = null
