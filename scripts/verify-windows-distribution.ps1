@@ -9,6 +9,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$packagingResources = Join-Path $PSScriptRoot "..\desktop\src\main\resources"
+foreach ($resourceName in @("icon.ico", "icon.png")) {
+    $resourcePath = Join-Path $packagingResources $resourceName
+    if (-not (Test-Path $resourcePath) -or (Get-Item $resourcePath).Length -eq 0) {
+        throw "Required jpackage resource is missing or empty: $resourcePath"
+    }
+}
+
 function Assert-PeExecutable([string]$Path) {
     if (-not (Test-Path $Path)) {
         throw "Expected Windows executable was not found: $Path"
@@ -63,13 +71,6 @@ function Assert-AppImage([string]$Root) {
         throw "Application image is missing packaged Windows native libraries (for example, Compose/Skiko DLL resources)."
     }
 
-    $iconResource = Get-ChildItem $appDirectory -Recurse -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -in @("icon.ico", "icon.png") } |
-        Select-Object -First 1
-    if (-not $iconResource) {
-        throw "Application image is missing the configured application icon resources."
-    }
-
     $nativeLibraries = @(Get-ChildItem (Join-Path $Root "runtime\bin") -Recurse -File -Filter "*.dll" -ErrorAction SilentlyContinue)
     if ($nativeLibraries.Count -lt 2) {
         throw "Bundled runtime is missing required native JVM libraries under '$Root\runtime\bin'."
@@ -85,7 +86,7 @@ function Assert-AppImage([string]$Root) {
     Write-Output "Launcher config: $($config.FullName)"
     Write-Output "Bundled runtime: $($Root)\runtime"
     Write-Output "Native JVM libraries: $($nativeLibraries.Count) DLL files"
-    Write-Output "Application JARs, native UI libraries, and icon resources are present."
+    Write-Output "Application JARs and native UI libraries are present."
 }
 
 function Test-LaunchWithoutSystemJava([string]$Launcher) {
@@ -165,4 +166,5 @@ Test-LaunchWithoutSystemJava (Join-Path $installedDirectory "$($appConfig.BaseNa
 
 Write-Output "Verified installer: $($installer.FullName)"
 Write-Output "Verified installed image: $installedDirectory"
+Write-Output "Verified jpackage icon inputs: $packagingResources"
 Write-Output "Staged artifacts under: $artifactRoot"
