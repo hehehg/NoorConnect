@@ -80,6 +80,9 @@ function Assert-AppImage([string]$Root) {
     if ($configText -match 'JAVA_HOME|JDK_HOME') {
         throw "Launcher config references a machine-specific Java environment variable: $($config.FullName)"
     }
+    if ($configText -notmatch '(?im)^\s*app\.runtime=.*\$APPDIR.*runtime') {
+        throw "Launcher config does not point to the app image's bundled runtime: $($config.FullName)"
+    }
 
     Write-Output "Verified application image: $Root"
     Write-Output "Launcher: $launcher"
@@ -99,18 +102,30 @@ function Test-LaunchWithoutSystemJava([string]$Launcher) {
         $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
 
         $process = Start-Process -FilePath $Launcher -PassThru
-        if ($process.WaitForExit(15000)) {
-            if ($process.ExitCode -ne 0) {
-                throw "Application launcher failed with exit code $($process.ExitCode) when JAVA_HOME and JDK_HOME were absent."
-            }
-            throw "Application launcher exited before its window became available."
-        } else {
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        $jvmLoaded = $false
+        $moduleInspectionError = $null
+        while ([DateTime]::UtcNow -lt $deadline) {
             $process.Refresh()
-            if ($process.MainWindowTitle -ne "NoorConnect") {
-                throw "Launcher remained open without showing the NoorConnect window; it may be blocked on a JVM-load error dialog."
+            if ($process.HasExited) {
+                throw "Application launcher exited with code $($process.ExitCode) before loading the bundled JVM."
             }
-            Stop-Process -Id $process.Id -Force
+
+            try {
+                $jvmLoaded = [bool]($process.Modules | Where-Object { $_.ModuleName -ieq "jvm.dll" } | Select-Object -First 1)
+            } catch {
+                $moduleInspectionError = $_.Exception.Message
+            }
+            if ($jvmLoaded) {
+                break
+            }
+            Start-Sleep -Milliseconds 250
         }
+
+        if (-not $jvmLoaded) {
+            throw "Launcher did not load jvm.dll from its bundled runtime within 15 seconds. $moduleInspectionError"
+        }
+        Stop-Process -Id $process.Id -Force
         Write-Output "Launcher started without JAVA_HOME, JDK_HOME, or Java on PATH."
     } finally {
         $env:JAVA_HOME = $originalJavaHome
