@@ -33,12 +33,17 @@ jobs:
       - name: Install WiX Toolset
         shell: pwsh
         run: |
-          choco install wixtoolset --version=3.14.1 --yes --no-progress
           $wixRoot = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset*" -Directory |
             Sort-Object FullName -Descending |
             Select-Object -First 1
           if (-not $wixRoot) {
-            throw "WiX Toolset 3.14.1 was not found after installation."
+            choco install wixtoolset --version=3.14.1.20250415 --yes --no-progress
+            $wixRoot = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset*" -Directory |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+          }
+          if (-not $wixRoot) {
+            throw "WiX Toolset 3.14.1 was not found on the runner after installation."
           }
           $wixBin = Join-Path $wixRoot.FullName "bin"
           if (-not (Test-Path (Join-Path $wixBin "candle.exe"))) {
