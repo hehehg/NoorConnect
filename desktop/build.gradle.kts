@@ -8,7 +8,9 @@ plugins {
 }
 
 group = "com.noorconnect"
-val appVersion = providers.gradleProperty("appVersion").getOrElse("1.0.0")
+val appVersion = providers.environmentVariable("APP_VERSION")
+    .orElse(providers.gradleProperty("appVersion"))
+    .getOrElse("1.0.0")
 version = appVersion
 
 java {
@@ -37,6 +39,7 @@ compose.desktop {
             windows {
                 exePackageVersion = appVersion
                 msiPackageVersion = appVersion
+                packageVersion = appVersion
                 iconFile.set(project.file("src/main/resources/icon.ico"))
                 menu = true
                 shortcut = true

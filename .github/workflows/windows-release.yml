@@ -30,6 +30,7 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Install WiX Toolset
         shell: pwsh
@@ -50,11 +51,11 @@ jobs:
 
       - name: Run desktop tests
         shell: pwsh
-        run: .\gradlew.bat -p desktop clean test --no-daemon --console=plain -PappVersion=${{ steps.version.outputs.version }}
+        run: .\gradlew.bat -p desktop clean test --no-daemon --console=plain
 
       - name: Build release artifacts
         shell: pwsh
-        run: .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain -PappVersion=${{ steps.version.outputs.version }}
+        run: .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2

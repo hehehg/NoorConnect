@@ -62,15 +62,15 @@ jobs:
 
       - name: Run desktop tests
         shell: pwsh
-        run: .\gradlew.bat -p desktop clean test --no-daemon --console=plain -PappVersion=${{ env.APP_VERSION }}
+        run: .\gradlew.bat -p desktop clean test --no-daemon --console=plain
 
       - name: Build Windows setup EXE
         shell: pwsh
-        run: .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain -PappVersion=${{ env.APP_VERSION }}
+        run: .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain
 
       - name: Build portable Windows app image
         shell: pwsh
-        run: .\gradlew.bat -p desktop packageReleaseDistributionForCurrentOS --no-daemon --console=plain -PappVersion=${{ env.APP_VERSION }}
+        run: .\gradlew.bat -p desktop packageReleaseDistributionForCurrentOS --no-daemon --console=plain
 
       - name: Stage and verify final artifacts
         shell: pwsh
