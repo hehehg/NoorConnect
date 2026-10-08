@@ -70,7 +70,7 @@ jobs:
 
       - name: Build portable Windows app image
         shell: pwsh
-        run: .\gradlew.bat -p desktop packageReleaseDistributionForCurrentOS --no-daemon --console=plain
+        run: .\gradlew.bat -p desktop createReleaseDistributable --no-daemon --console=plain
 
       - name: Stage and verify final artifacts
         shell: pwsh
