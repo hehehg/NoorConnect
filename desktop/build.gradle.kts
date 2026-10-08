@@ -8,7 +8,8 @@ plugins {
 }
 
 group = "com.noorconnect"
-version = providers.gradleProperty("appVersion").getOrElse("1.0.0")
+val appVersion = providers.gradleProperty("appVersion").getOrElse("1.0.0")
+version = appVersion
 
 java {
     toolchain {
@@ -31,9 +32,11 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "NoorConnect"
-            packageVersion = version.toString()
+            packageVersion = appVersion
             appResourcesRootDir = file("src/main/resources")
             windows {
+                exePackageVersion = appVersion
+                msiPackageVersion = appVersion
                 iconFile.set(project.file("src/main/resources/icon.ico"))
                 menu = true
                 shortcut = true
