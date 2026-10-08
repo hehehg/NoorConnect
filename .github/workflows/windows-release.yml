@@ -63,13 +63,13 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/pin-jdk21.ps1 -VerifyOnly
-          .\gradlew.bat -p desktop createReleaseDistributable --no-daemon --console=plain
+          .\gradlew.bat -p desktop createDistributable --no-daemon --console=plain
 
       - name: Build release installer
         shell: pwsh
         run: |
           ./scripts/pin-jdk21.ps1 -VerifyOnly
-          .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain
+          .\gradlew.bat -p desktop packageExe --no-daemon --console=plain
 
       - name: Stage and verify release artifacts
         shell: pwsh

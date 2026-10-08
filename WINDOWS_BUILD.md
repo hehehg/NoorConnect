@@ -20,11 +20,11 @@ Use Windows with JDK 21 and WiX Toolset 3.14.1 installed. From the repository ro
 
 ```powershell
 .\gradlew.bat -p desktop clean test --no-daemon --console=plain -PappVersion=1.0.0
-.\gradlew.bat -p desktop createReleaseDistributable --no-daemon --console=plain -PappVersion=1.0.0
-.\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain -PappVersion=1.0.0
+.\gradlew.bat -p desktop createDistributable --no-daemon --console=plain -PappVersion=1.0.0
+.\gradlew.bat -p desktop packageExe --no-daemon --console=plain -PappVersion=1.0.0
 ```
 
-The desktop toolchain is pinned to 64-bit Eclipse Temurin JDK 21. jpackage creates an application image with a linked Java runtime; the setup executable installs that complete image, and the portable artifact contains the same launcher, `.cfg`, application resources, native libraries, and `runtime/` directory. GitHub Actions verifies both images and launches them with `JAVA_HOME`, `JDK_HOME`, and Java removed from `PATH` before publishing `NoorConnect-Windows-Installer` and `NoorConnect-Windows-Portable`.
+The desktop toolchain is pinned to 64-bit Eclipse Temurin JDK 21. The standard Compose packaging tasks avoid release ProGuard transformations that can invalidate coroutine bytecode. jpackage creates an application image with a linked Java runtime; the setup executable installs that complete image, and the portable artifact contains the same launcher, `.cfg`, application resources, native libraries, and `runtime/` directory. GitHub Actions checks launch output with `JAVA_HOME`, `JDK_HOME`, and Java removed from `PATH` before publishing `NoorConnect-Windows-Installer` and `NoorConnect-Windows-Portable`.
 
 Gradle package outputs are under `desktop/build/compose/binaries/`; CI uploads only the staged final artifacts, not that build directory.
 

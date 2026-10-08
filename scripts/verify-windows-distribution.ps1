@@ -94,16 +94,32 @@ function Test-LaunchWithoutSystemJava([string]$Launcher) {
     $originalJdkHome = $env:JDK_HOME
     $originalPath = $env:PATH
     $process = $null
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
     try {
         Remove-Item Env:JAVA_HOME -ErrorAction SilentlyContinue
         Remove-Item Env:JDK_HOME -ErrorAction SilentlyContinue
         $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
 
-        $process = Start-Process -FilePath $Launcher -PassThru
-        if ($process.WaitForExit(15000)) {
-            throw "Application launcher exited with code $($process.ExitCode) when JAVA_HOME, JDK_HOME, and Java on PATH were unavailable."
+        $process = Start-Process -FilePath $Launcher -ArgumentList "--verbose" -PassThru `
+            -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $exited = $process.WaitForExit(15000)
+        if (-not $exited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            $process.WaitForExit()
         }
-        Write-Output "Application launcher remained running without JAVA_HOME, JDK_HOME, or Java on PATH."
+
+        $launchOutput = @(
+            [System.IO.File]::ReadAllText($stdoutPath)
+            [System.IO.File]::ReadAllText($stderrPath)
+        ) -join [Environment]::NewLine
+        if ($launchOutput -match '(?i)VerifyError|Failed to launch JVM|Exception in thread') {
+            throw "Application launcher reported a JVM/application startup error:`n$launchOutput"
+        }
+        if ($exited) {
+            throw "Application launcher exited with code $($process.ExitCode) when JAVA_HOME, JDK_HOME, and Java on PATH were unavailable.`n$launchOutput"
+        }
+        Write-Output "Application launcher remained running without JAVA_HOME, JDK_HOME, or Java on PATH and reported no startup exception."
     } finally {
         if ($process) {
             $process.Refresh()
@@ -114,6 +130,7 @@ function Test-LaunchWithoutSystemJava([string]$Launcher) {
         $env:JAVA_HOME = $originalJavaHome
         $env:JDK_HOME = $originalJdkHome
         $env:PATH = $originalPath
+        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
     }
 }
 
