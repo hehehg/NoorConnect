@@ -42,6 +42,7 @@ compose.desktop {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "NoorConnect"
             packageVersion = appVersion
+            includeAllModules = true
             appResourcesRootDir = file("src/main/resources")
             windows {
                 exePackageVersion = appVersion
