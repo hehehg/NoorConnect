@@ -101,19 +101,26 @@ jobs:
           }
           Copy-Item $installer.FullName (Join-Path $installerDir "NoorConnect-Setup-$version.exe")
 
-          $appImage = Get-ChildItem $binaryRoot -Recurse -Directory |
-            Where-Object {
-              (Test-Path (Join-Path $_.FullName "runtime\bin\java.exe")) -and
-              (Test-Path (Join-Path $_.FullName "app"))
-            } |
-            Select-Object -First 1
-          if (-not $appImage) {
-            throw "The runtime-inclusive portable app image was not generated under $binaryRoot."
+          $appImage = $null
+          $appLauncher = $null
+          $appConfigs = Get-ChildItem $binaryRoot -Recurse -File -Filter "*.cfg" |
+            Where-Object { $_.Directory.Name -eq "app" }
+          foreach ($appConfig in $appConfigs) {
+            $candidateRoot = $appConfig.Directory.Parent
+            $candidateLauncher = Join-Path $candidateRoot.FullName "$($appConfig.BaseName).exe"
+            $candidateRuntime = Get-ChildItem $candidateRoot.FullName -Recurse -File -Filter "java.exe" |
+              Select-Object -First 1
+            if ((Test-Path $candidateLauncher) -and $candidateRuntime) {
+              $appImage = $candidateRoot
+              $appLauncher = Get-Item $candidateLauncher
+              break
+            }
           }
-          $appLauncher = Get-ChildItem $appImage.FullName -File -Filter "*.exe" |
-            Select-Object -First 1
-          if (-not $appLauncher) {
-            throw "No launcher executable was found in portable app image '$($appImage.FullName)'."
+          if (-not $appImage) {
+            Get-ChildItem $binaryRoot -Recurse -File -Include "*.cfg", "*.exe" |
+              Select-Object -First 30 -ExpandProperty FullName |
+              ForEach-Object { Write-Host "Portable candidate: $_" }
+            throw "The runtime-inclusive portable app image was not generated under $binaryRoot."
           }
           Copy-Item (Join-Path $appImage.FullName "*") $portableDir -Recurse -Force
 
@@ -129,7 +136,9 @@ jobs:
           if ($portableBytes.Length -lt 2 -or $portableBytes[0] -ne 0x4D -or $portableBytes[1] -ne 0x5A) {
             throw "The portable executable does not have a valid Windows PE signature."
           }
-          if (-not (Test-Path (Join-Path $portableDir "runtime\bin\java.exe"))) {
+          $portableRuntime = Get-ChildItem $portableDir -Recurse -File -Filter "java.exe" |
+            Select-Object -First 1
+          if (-not $portableRuntime) {
             throw "The portable app image is missing its bundled Java runtime."
           }
 
