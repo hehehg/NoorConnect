@@ -12,6 +12,7 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import java.io.File
+import java.util.UUID
 import java.util.Calendar
 import java.util.Locale
 import java.text.SimpleDateFormat
@@ -415,8 +416,14 @@ private fun ChatContent(
                 originalName?.substringAfterLast('.', "")?.lowercase(),
             )
             ?: "application/octet-stream"
-        val path = File.createTempFile("upload-", uploadSuffix(originalName, mimeType), context.cacheDir)
+        val uploadDirectory = File(context.cacheDir, "upload-${UUID.randomUUID()}")
+        val safeName = originalName
+            ?.let { File(it).name }
+            ?.takeIf { it.isNotBlank() && it != "." && it != ".." }
+            ?: "upload${uploadSuffix(originalName, mimeType)}"
+        val path = File(uploadDirectory, safeName)
         val copied = runCatching {
+            check(uploadDirectory.mkdirs()) { "تعذر تجهيز مجلد الوسائط" }
             resolver.openInputStream(uri)?.use { input ->
                 path.outputStream().use { output -> input.copyTo(output) }
             } ?: error("تعذر فتح الوسائط المختارة")
@@ -429,6 +436,7 @@ private fun ChatContent(
             mediaError = null
         } else {
             path.delete()
+            uploadDirectory.delete()
             mediaError = copied.exceptionOrNull()?.message ?: "تعذر تجهيز الوسائط"
         }
     }
@@ -535,6 +543,7 @@ private fun ChatContent(
                             pendingSavePath = path
                             saveFile.launch(name)
                         },
+                        onMediaOpenFailure = { mediaError = it },
                         onOpenPrivateChat = onOpenPrivateChat,
                         onDelete = onDelete,
                         onShareMessage = onShareMessage,
@@ -664,6 +673,7 @@ private fun MessageBubble(
     onDownloadVideoThumbnail: () -> Unit,
     onDownloadMedia: () -> Unit,
     onSaveMedia: (String, String) -> Unit,
+    onMediaOpenFailure: (String) -> Unit,
     onOpenPrivateChat: (Long) -> Unit,
     onDelete: (Long) -> Unit,
     onShareMessage: (Long) -> Unit,
@@ -698,7 +708,7 @@ private fun MessageBubble(
                 ),
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
-                Text(senderName, color = avatarColor, style = MaterialTheme.typography.labelMedium)
+                Text(senderName, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
 
                 message.replyTo?.let { reply ->
                     Surface(
@@ -707,7 +717,11 @@ private fun MessageBubble(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp),
                     ) {
                         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                            Text(text = reply.senderName ?: "إجابة", style = MaterialTheme.typography.labelSmall, color = avatarColor)
+                            Text(
+                                text = reply.senderName ?: "إجابة",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                             LinkifiedText(
                                 text = reply.text.ifBlank { "محتوى" },
                                 style = MaterialTheme.typography.bodySmall,
@@ -720,11 +734,6 @@ private fun MessageBubble(
                 message.photo?.let { photo ->
                     Spacer(modifier = Modifier.size(4.dp))
                     MessagePhotoContent(photo = photo, state = photoState, onDownload = onDownloadPhoto)
-                    (photoState as? PhotoDownloadState.Ready)?.let { ready ->
-                        TextButton(onClick = { onSaveMedia(ready.localPath, "photo.jpg") }) {
-                            Text("حفظ على الجهاز")
-                        }
-                    }
                     if (message.text.isNotBlank()) Spacer(modifier = Modifier.size(4.dp))
                 }
                 if (message.mediaType == MessageMediaType.VIDEO) {
@@ -767,24 +776,31 @@ private fun MessageBubble(
                             TextButton(onClick = onDownloadMedia) { Text("تحميل") }
                         } else {
                         TextButton(onClick = {
-                            val uri = FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.fileprovider",
-                                File(filePath),
-                            )
-                            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                                type = message.mediaMimeType ?: "application/octet-stream"
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                clipData = android.content.ClipData.newRawUri("media", uri)
-                            }
-                            try {
+                            runCatching {
+                                val uri = FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    File(filePath),
+                                )
+                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(uri, message.mediaMimeType ?: "application/octet-stream")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    clipData = android.content.ClipData.newRawUri("media", uri)
+                                }
                                 context.startActivity(intent)
-                            } catch (_: ActivityNotFoundException) {
-                                Unit
-                            }
+                            }.onFailure { onMediaOpenFailure(it.message ?: "تعذر فتح الوسائط") }
                         }) { Text("فتح") }
                         TextButton(onClick = {
-                            onSaveMedia(filePath, message.mediaName ?: "وسائط")
+                            val extension = message.mediaMimeType
+                                ?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
+                            val fallbackName = when (message.mediaType) {
+                                MessageMediaType.PHOTO -> "صورة-${message.id}.${extension ?: "jpg"}"
+                                MessageMediaType.VIDEO -> "فيديو-${message.id}.${extension ?: "mp4"}"
+                                MessageMediaType.AUDIO -> "صوت-${message.id}.${extension ?: "mp3"}"
+                                MessageMediaType.VOICE -> "رسالة-صوتية-${message.id}.${extension ?: "ogg"}"
+                                else -> "ملف-${message.id}${extension?.let { ".$it" }.orEmpty()}"
+                            }
+                            onSaveMedia(filePath, message.mediaName?.takeIf { it.isNotBlank() } ?: fallbackName)
                         }) { Text("حفظ على الجهاز") }
                         }
                     }

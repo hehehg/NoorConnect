@@ -3,4 +3,7 @@
     <files-path
         name="tdlib_files"
         path="tdlib-files/" />
+    <cache-path
+        name="cached_media"
+        path="." />
 </paths>

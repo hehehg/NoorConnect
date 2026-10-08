@@ -55,6 +55,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
+data class ScheduledMessageKey(val chatId: Long, val messageId: Long)
+
 @HiltViewModel
 class ScheduledMessagesViewModel @Inject constructor(
     private val getAllScheduledMessages: GetAllScheduledMessagesUseCase,
@@ -71,6 +73,9 @@ class ScheduledMessagesViewModel @Inject constructor(
 
     private val _workingMessageId = MutableStateFlow<Long?>(null)
     val workingMessageId: StateFlow<Long?> = _workingMessageId
+
+    private val _editCompletedKey = MutableStateFlow<ScheduledMessageKey?>(null)
+    val editCompletedKey: StateFlow<ScheduledMessageKey?> = _editCompletedKey
 
     init {
         refresh()
@@ -99,18 +104,30 @@ class ScheduledMessagesViewModel @Inject constructor(
         sendMessage.delete(item.chatId, item.message.id)
     }
 
-    fun edit(item: ScheduledChatMessage, text: String) = perform(item) {
-        sendMessage.edit(item.chatId, item.message.id, text)
+    fun edit(item: ScheduledChatMessage, text: String) {
+        _editCompletedKey.value = null
+        perform(
+            item = item,
+            action = { sendMessage.edit(item.chatId, item.message.id, text) },
+            onSuccess = { _editCompletedKey.value = ScheduledMessageKey(item.chatId, item.message.id) },
+        )
     }
 
-    private fun perform(item: ScheduledChatMessage, action: suspend () -> AppResult<Unit>) {
+    private fun perform(
+        item: ScheduledChatMessage,
+        action: suspend () -> AppResult<Unit>,
+        onSuccess: () -> Unit = {},
+    ) {
         if (_workingMessageId.value != null) return
         viewModelScope.launch {
             _workingMessageId.value = item.message.id
             _error.value = null
             try {
                 when (val result = action()) {
-                    is AppResult.Success -> _messages.value = getAllScheduledMessages()
+                    is AppResult.Success -> {
+                        _messages.value = getAllScheduledMessages()
+                        onSuccess()
+                    }
                     is AppResult.Failure -> _error.value = result.message
                     is AppResult.Loading -> _error.value = "جار تنفيذ العملية"
                 }
@@ -133,12 +150,14 @@ fun ScheduledMessagesRoute(
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val workingMessageId by viewModel.workingMessageId.collectAsStateWithLifecycle()
+    val editCompletedKey by viewModel.editCompletedKey.collectAsStateWithLifecycle()
 
     ScheduledMessagesScreen(
         messages = messages,
         isLoading = isLoading,
         error = error,
         workingMessageId = workingMessageId,
+        editCompletedKey = editCompletedKey,
         onBack = onBack,
         onOpenChat = onOpenChat,
         onRefresh = viewModel::refresh,
@@ -155,6 +174,7 @@ private fun ScheduledMessagesScreen(
     isLoading: Boolean,
     error: String?,
     workingMessageId: Long?,
+    editCompletedKey: ScheduledMessageKey?,
     onBack: () -> Unit,
     onOpenChat: (Long) -> Unit,
     onRefresh: () -> Unit,
@@ -163,6 +183,13 @@ private fun ScheduledMessagesScreen(
     onEdit: (ScheduledChatMessage, String) -> Unit,
 ) {
     var editing by remember { mutableStateOf<ScheduledChatMessage?>(null) }
+
+    androidx.compose.runtime.LaunchedEffect(editCompletedKey) {
+        val edited = editing
+        if (edited != null && editCompletedKey == ScheduledMessageKey(edited.chatId, edited.message.id)) {
+            editing = null
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -245,7 +272,7 @@ private fun ScheduledMessagesScreen(
     }
 
     editing?.let { item ->
-        var text by remember(item.message.id) { mutableStateOf(item.message.text) }
+        var text by remember(item.chatId, item.message.id) { mutableStateOf(item.message.text) }
         AlertDialog(
             onDismissRequest = { editing = null },
             title = { Text("تعديل الرسالة المجدولة") },
@@ -254,7 +281,6 @@ private fun ScheduledMessagesScreen(
                 TextButton(
                     onClick = {
                         onEdit(item, text)
-                        editing = null
                     },
                     enabled = text.isNotBlank() && workingMessageId == null,
                 ) { Text("حفظ") }

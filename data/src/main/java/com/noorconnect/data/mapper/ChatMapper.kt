@@ -119,6 +119,7 @@ fun TdApi.Message.toDomain(): Message {
             else -> null
         },
         mediaMimeType = when (messageContent) {
+            is TdApi.MessagePhoto -> "image/jpeg"
             is TdApi.MessageAnimation -> messageContent.animation?.mimeType
             is TdApi.MessageVideo -> messageContent.video?.mimeType
             is TdApi.MessageAudio -> messageContent.audio?.mimeType
