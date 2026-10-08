@@ -31,6 +31,13 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "com.noorconnect.desktop.MainKt"
+        buildTypes {
+            release {
+                proguard {
+                    version.set("7.6.1")
+                }
+            }
+        }
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "NoorConnect"
