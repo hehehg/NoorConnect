@@ -108,9 +108,9 @@ jobs:
           foreach ($appConfig in $appConfigs) {
             $candidateRoot = $appConfig.Directory.Parent
             $candidateLauncher = Join-Path $candidateRoot.FullName "$($appConfig.BaseName).exe"
-            $candidateRuntime = Get-ChildItem $candidateRoot.FullName -Recurse -File -Filter "java.exe" |
-              Select-Object -First 1
-            if ((Test-Path $candidateLauncher) -and $candidateRuntime) {
+            $runtimeConfig = Join-Path $candidateRoot.FullName "runtime\lib\jvm.cfg"
+            $runtimeModules = Join-Path $candidateRoot.FullName "runtime\lib\modules"
+            if ((Test-Path $candidateLauncher) -and (Test-Path $runtimeConfig) -and (Test-Path $runtimeModules)) {
               $appImage = $candidateRoot
               $appLauncher = Get-Item $candidateLauncher
               break
@@ -136,9 +136,8 @@ jobs:
           if ($portableBytes.Length -lt 2 -or $portableBytes[0] -ne 0x4D -or $portableBytes[1] -ne 0x5A) {
             throw "The portable executable does not have a valid Windows PE signature."
           }
-          $portableRuntime = Get-ChildItem $portableDir -Recurse -File -Filter "java.exe" |
-            Select-Object -First 1
-          if (-not $portableRuntime) {
+          if (-not (Test-Path (Join-Path $portableDir "runtime\lib\jvm.cfg")) -or
+              -not (Test-Path (Join-Path $portableDir "runtime\lib\modules"))) {
             throw "The portable app image is missing its bundled Java runtime."
           }
 
