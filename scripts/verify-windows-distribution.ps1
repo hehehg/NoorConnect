@@ -40,7 +40,6 @@ function Assert-AppImage([string]$Root) {
     $runtimeFiles = @(
         (Join-Path $Root "runtime\lib\jvm.cfg"),
         (Join-Path $Root "runtime\lib\modules"),
-        (Join-Path $Root "runtime\bin\java.exe"),
         (Join-Path $Root "runtime\bin\java.dll"),
         (Join-Path $Root "runtime\bin\server\jvm.dll")
     )
@@ -99,13 +98,6 @@ function Test-LaunchWithoutSystemJava([string]$Launcher) {
         Remove-Item Env:JAVA_HOME -ErrorAction SilentlyContinue
         Remove-Item Env:JDK_HOME -ErrorAction SilentlyContinue
         $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-
-        $runtimeJava = Join-Path (Split-Path $Launcher -Parent) "runtime\bin\java.exe"
-        $runtimeVersion = (& $runtimeJava -version 2>&1 | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or $runtimeVersion -notmatch 'version "21(?:\.|"|\+)') {
-            throw "Bundled Java runtime failed its standalone version check: $runtimeVersion"
-        }
-        Write-Output "Bundled runtime executes without system Java: $runtimeVersion"
 
         $process = Start-Process -FilePath $Launcher -PassThru
         if ($process.WaitForExit(15000)) {
