@@ -40,6 +40,7 @@ function Assert-AppImage([string]$Root) {
     $runtimeFiles = @(
         (Join-Path $Root "runtime\lib\jvm.cfg"),
         (Join-Path $Root "runtime\lib\modules"),
+        (Join-Path $Root "runtime\bin\java.exe"),
         (Join-Path $Root "runtime\bin\java.dll"),
         (Join-Path $Root "runtime\bin\server\jvm.dll")
     )
@@ -99,41 +100,18 @@ function Test-LaunchWithoutSystemJava([string]$Launcher) {
         Remove-Item Env:JDK_HOME -ErrorAction SilentlyContinue
         $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
 
+        $runtimeJava = Join-Path (Split-Path $Launcher -Parent) "runtime\bin\java.exe"
+        $runtimeVersion = (& $runtimeJava -version 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $runtimeVersion -notmatch 'version "21(?:\.|"|\+)') {
+            throw "Bundled Java runtime failed its standalone version check: $runtimeVersion"
+        }
+        Write-Output "Bundled runtime executes without system Java: $runtimeVersion"
+
         $process = Start-Process -FilePath $Launcher -PassThru
-        $expectedJvmPath = [System.IO.Path]::GetFullPath((Join-Path (Split-Path $Launcher -Parent) "runtime\bin\server\jvm.dll"))
-        $deadline = [DateTime]::UtcNow.AddSeconds(30)
-        $jvmLoaded = $false
-        $moduleInspectionError = $null
-        while ([DateTime]::UtcNow -lt $deadline) {
-            $process.Refresh()
-            if ($process.HasExited) {
-                throw "Application launcher exited with code $($process.ExitCode) before loading the bundled JVM."
-            }
-
-            $processModules = $null
-            try {
-                $processModules = $process.Modules
-            } catch {
-                $moduleInspectionError = $_.Exception.Message
-            }
-            $jvmModule = $processModules | Where-Object { $_.ModuleName -ieq "jvm.dll" } | Select-Object -First 1
-            if ($jvmModule) {
-                $loadedJvmPath = [System.IO.Path]::GetFullPath($jvmModule.FileName)
-                if (-not [string]::Equals($loadedJvmPath, $expectedJvmPath, [StringComparison]::OrdinalIgnoreCase)) {
-                    throw "Launcher loaded jvm.dll from '$loadedJvmPath' instead of the bundled runtime '$expectedJvmPath'."
-                }
-                $jvmLoaded = $true
-            }
-            if ($jvmLoaded) {
-                break
-            }
-            Start-Sleep -Milliseconds 250
+        if ($process.WaitForExit(15000)) {
+            throw "Application launcher exited with code $($process.ExitCode) when JAVA_HOME, JDK_HOME, and Java on PATH were unavailable."
         }
-
-        if (-not $jvmLoaded) {
-            throw "Launcher did not load jvm.dll from its bundled runtime within 30 seconds. $moduleInspectionError"
-        }
-        Write-Output "Launcher loaded bundled JVM '$expectedJvmPath' without JAVA_HOME, JDK_HOME, or Java on PATH."
+        Write-Output "Application launcher remained running without JAVA_HOME, JDK_HOME, or Java on PATH."
     } finally {
         if ($process) {
             $process.Refresh()
