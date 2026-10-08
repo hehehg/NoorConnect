@@ -101,25 +101,29 @@ jobs:
           }
           Copy-Item $installer.FullName (Join-Path $installerDir "NoorConnect-Setup-$version.exe")
 
-          $appLauncher = Get-ChildItem $binaryRoot -Recurse -File -Filter "NoorConnect.exe" |
+          $appImage = Get-ChildItem $binaryRoot -Recurse -Directory |
             Where-Object {
-              (Test-Path (Join-Path $_.Directory.FullName "runtime")) -and
-              (Test-Path (Join-Path $_.Directory.FullName "app"))
+              (Test-Path (Join-Path $_.FullName "runtime\bin\java.exe")) -and
+              (Test-Path (Join-Path $_.FullName "app"))
             } |
             Select-Object -First 1
-          if (-not $appLauncher) {
-            throw "The runtime-inclusive portable app image containing NoorConnect.exe was not generated."
+          if (-not $appImage) {
+            throw "The runtime-inclusive portable app image was not generated under $binaryRoot."
           }
-          Copy-Item (Join-Path $appLauncher.Directory.FullName "*") $portableDir -Recurse -Force
+          $appLauncher = Get-ChildItem $appImage.FullName -File -Filter "*.exe" |
+            Select-Object -First 1
+          if (-not $appLauncher) {
+            throw "No launcher executable was found in portable app image '$($appImage.FullName)'."
+          }
+          Copy-Item (Join-Path $appImage.FullName "*") $portableDir -Recurse -Force
 
           $portableExe = Join-Path $portableDir "NoorConnect-$version.exe"
-          Copy-Item (Join-Path $portableDir "NoorConnect.exe") $portableExe
-          $launcherConfig = Get-ChildItem (Join-Path $portableDir "app") -File -Filter "NoorConnect.cfg" |
-            Select-Object -First 1
-          if (-not $launcherConfig) {
-            throw "The portable app image is missing app\NoorConnect.cfg; refusing to publish an incomplete app."
+          Copy-Item $appLauncher.FullName $portableExe
+          $launcherConfig = Join-Path (Join-Path $portableDir "app") "$($appLauncher.BaseName).cfg"
+          if (-not (Test-Path $launcherConfig)) {
+            throw "The portable app image is missing app\$($appLauncher.BaseName).cfg; refusing to publish an incomplete app."
           }
-          Copy-Item $launcherConfig.FullName (Join-Path $launcherConfig.Directory.FullName "NoorConnect-$version.cfg")
+          Copy-Item $launcherConfig (Join-Path (Join-Path $portableDir "app") "NoorConnect-$version.cfg")
 
           $portableBytes = [System.IO.File]::ReadAllBytes($portableExe)
           if ($portableBytes.Length -lt 2 -or $portableBytes[0] -ne 0x4D -or $portableBytes[1] -ne 0x5A) {
