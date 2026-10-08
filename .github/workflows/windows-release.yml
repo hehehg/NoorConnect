@@ -1,0 +1,60 @@
+name: Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release-windows:
+    name: Build and publish Windows release
+    runs-on: windows-2022
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          architecture: x64
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: |
+          choco install wixtoolset --version=3.14.1 --yes --no-progress
+          $wixRoot = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset*" -Directory |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $wixRoot -or -not (Test-Path (Join-Path $wixRoot.FullName "bin\candle.exe"))) {
+            throw "WiX Toolset 3.14.1 was not installed correctly."
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $wixRoot.FullName "bin")
+
+      - name: Run desktop tests
+        shell: pwsh
+        run: .\gradlew.bat -p desktop clean test --no-daemon --console=plain -PappVersion=${{ steps.version.outputs.version }}
+
+      - name: Build release artifacts
+        shell: pwsh
+        run: .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain -PappVersion=${{ steps.version.outputs.version }}
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/build/compose/binaries/**/exe/NoorConnect-${{ steps.version.outputs.version }}.exe
+          draft: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true

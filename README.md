@@ -142,8 +142,20 @@ moderation_config/banned_words
 
 راجع [`SECURITY.md`](./SECURITY.md) قبل أي نشر فعلي — يغطي الالتزام بشروط تليجرام، ترخيص GPL، قواعد أمان Firestore، وتوقيع الإصدار.
 
+## Windows desktop
+
+تمت إضافة مشروع Windows desktop مستقل تحت مجلد `desktop/` باستخدام Kotlin + JetBrains Compose Desktop. اختبار JVM يعمل عبر Gradle، أما إنشاء حزمة Windows فيتم على Windows runner باستخدام JDK 21 وWiX.
+
+- أوامر Windows PowerShell: موثقة في [`WINDOWS_BUILD.md`](./WINDOWS_BUILD.md)
+- GitHub Actions يبني حزمة التثبيت ونسخة portable على `windows-2022`
+- دليل البناء: [`WINDOWS_BUILD.md`](./WINDOWS_BUILD.md)
+- جدول التوافق: [`WINDOWS_FEATURE_PARITY.md`](./WINDOWS_FEATURE_PARITY.md)
+- Workflow البناء: [`.github/workflows/windows-build.yml`](.github/workflows/windows-build.yml)
+
 ## الوثائق ذات الصلة
 
 - [`SECURITY.md`](./SECURITY.md) — الأمان، الترخيص، والتزامات ما قبل النشر
 - `BUILD_CLI.md` — البناء من سطر الأوامر
+- [`WINDOWS_BUILD.md`](./WINDOWS_BUILD.md) — بناء Windows desktop
+- [`WINDOWS_FEATURE_PARITY.md`](./WINDOWS_FEATURE_PARITY.md) — جدول التوافق
 - `admin-panel/README.md` — لوحة إدارة الفلترة

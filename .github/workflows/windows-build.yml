@@ -1,0 +1,158 @@
+name: Windows Build
+
+on:
+  push:
+    branches:
+      - Desktop-Windows-Verison
+  pull_request:
+    branches:
+      - Desktop-Windows-Verison
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build NoorConnect for Windows x64
+    runs-on: windows-2022
+    env:
+      APP_VERSION: 1.0.0
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          architecture: x64
+
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: |
+          choco install wixtoolset --version=3.14.1 --yes --no-progress
+          $wixRoot = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset*" -Directory |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $wixRoot) {
+            throw "WiX Toolset 3.14.1 was not found after installation."
+          }
+          $wixBin = Join-Path $wixRoot.FullName "bin"
+          if (-not (Test-Path (Join-Path $wixBin "candle.exe"))) {
+            throw "WiX candle.exe is missing from $wixBin."
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $wixBin
+
+      - name: Verify Java and jpackage
+        shell: pwsh
+        run: |
+          java -version
+          if (-not (Get-Command jpackage -ErrorAction SilentlyContinue)) {
+            throw "jpackage is required but was not found on PATH."
+          }
+          jpackage --version
+
+      - name: Run desktop tests
+        shell: pwsh
+        run: .\gradlew.bat -p desktop clean test --no-daemon --console=plain -PappVersion=${{ env.APP_VERSION }}
+
+      - name: Build Windows setup EXE
+        shell: pwsh
+        run: .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain -PappVersion=${{ env.APP_VERSION }}
+
+      - name: Build portable Windows app image
+        shell: pwsh
+        run: .\gradlew.bat -p desktop packageReleaseDistributionForCurrentOS --no-daemon --console=plain -PappVersion=${{ env.APP_VERSION }}
+
+      - name: Stage and verify final artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:APP_VERSION
+          $binaryRoot = Join-Path $env:GITHUB_WORKSPACE "desktop\build\compose\binaries"
+          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE "artifacts"
+          $installerDir = Join-Path $artifactRoot "installer"
+          $portableDir = Join-Path $artifactRoot "portable\NoorConnect-$version"
+
+          if (Test-Path $artifactRoot) {
+            Remove-Item $artifactRoot -Recurse -Force
+          }
+          New-Item $installerDir -ItemType Directory -Force | Out-Null
+          New-Item $portableDir -ItemType Directory -Force | Out-Null
+
+          $installerName = "NoorConnect-$version.exe"
+          $installer = Get-ChildItem $binaryRoot -Recurse -File -Filter $installerName |
+            Where-Object { $_.Directory.Name -eq "exe" } |
+            Select-Object -First 1
+          if (-not $installer -or $installer.Length -le 0) {
+            throw "Expected Windows setup executable '$installerName' was not generated under $binaryRoot."
+          }
+          $installerBytes = [System.IO.File]::ReadAllBytes($installer.FullName)
+          if ($installerBytes.Length -lt 2 -or $installerBytes[0] -ne 0x4D -or $installerBytes[1] -ne 0x5A) {
+            throw "The generated setup executable does not have a valid Windows PE signature."
+          }
+          Copy-Item $installer.FullName (Join-Path $installerDir "NoorConnect-Setup-$version.exe")
+
+          $appLauncher = Get-ChildItem $binaryRoot -Recurse -File -Filter "NoorConnect.exe" |
+            Where-Object {
+              (Test-Path (Join-Path $_.Directory.FullName "runtime")) -and
+              (Test-Path (Join-Path $_.Directory.FullName "app"))
+            } |
+            Select-Object -First 1
+          if (-not $appLauncher) {
+            throw "The runtime-inclusive portable app image containing NoorConnect.exe was not generated."
+          }
+          Copy-Item (Join-Path $appLauncher.Directory.FullName "*") $portableDir -Recurse -Force
+
+          $portableExe = Join-Path $portableDir "NoorConnect-$version.exe"
+          Copy-Item (Join-Path $portableDir "NoorConnect.exe") $portableExe
+          $launcherConfig = Get-ChildItem (Join-Path $portableDir "app") -File -Filter "NoorConnect.cfg" |
+            Select-Object -First 1
+          if (-not $launcherConfig) {
+            throw "The portable app image is missing app\NoorConnect.cfg; refusing to publish an incomplete app."
+          }
+          Copy-Item $launcherConfig.FullName (Join-Path $launcherConfig.Directory.FullName "NoorConnect-$version.cfg")
+
+          $portableBytes = [System.IO.File]::ReadAllBytes($portableExe)
+          if ($portableBytes.Length -lt 2 -or $portableBytes[0] -ne 0x4D -or $portableBytes[1] -ne 0x5A) {
+            throw "The portable executable does not have a valid Windows PE signature."
+          }
+          if (-not (Test-Path (Join-Path $portableDir "runtime\bin\java.exe"))) {
+            throw "The portable app image is missing its bundled Java runtime."
+          }
+
+          Get-ChildItem $installerDir -File | Select-Object Name, Length
+          Get-ChildItem $portableDir -Recurse -File |
+            Where-Object { $_.Name -eq "NoorConnect-$version.exe" -or $_.Name -eq "NoorConnect-$version.cfg" } |
+            Select-Object FullName, Length
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoorConnect-Windows-Installer
+          path: artifacts/installer/NoorConnect-Setup-${{ env.APP_VERSION }}.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload portable Windows application
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoorConnect-Windows-Portable
+          path: artifacts/portable/NoorConnect-${{ env.APP_VERSION }}/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoorConnect-Windows-Build-Logs
+          path: |
+            desktop/build/reports/**
+            desktop/build/test-results/**
+            desktop/build/compose/logs/**
+          if-no-files-found: ignore
+          retention-days: 7
