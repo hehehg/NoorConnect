@@ -16,6 +16,7 @@ version = appVersion
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(21))
+        vendor.set(org.gradle.jvm.toolchain.JvmVendorSpec.ADOPTIUM)
     }
 }
 

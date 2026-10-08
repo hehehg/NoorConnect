@@ -20,11 +20,11 @@ Use Windows with JDK 21 and WiX Toolset 3.14.1 installed. From the repository ro
 
 ```powershell
 .\gradlew.bat -p desktop clean test --no-daemon --console=plain -PappVersion=1.0.0
+.\gradlew.bat -p desktop createReleaseDistributable --no-daemon --console=plain -PappVersion=1.0.0
 .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain -PappVersion=1.0.0
-.\gradlew.bat -p desktop packageReleaseDistributionForCurrentOS --no-daemon --console=plain -PappVersion=1.0.0
 ```
 
-`packageReleaseExe` creates the Windows setup executable. `packageReleaseDistributionForCurrentOS` creates a portable app image containing the launcher and bundled Java runtime. GitHub Actions stages these as `NoorConnect-Setup-1.0.0.exe` and a versioned portable launcher with its complete runtime directory.
+The desktop toolchain is pinned to 64-bit Eclipse Temurin JDK 21. jpackage creates an application image with a linked Java runtime; the setup executable installs that complete image, and the portable artifact contains the same launcher, `.cfg`, application resources, native libraries, and `runtime/` directory. GitHub Actions verifies both images and launches them with `JAVA_HOME`, `JDK_HOME`, and Java removed from `PATH` before publishing `NoorConnect-Windows-Installer` and `NoorConnect-Windows-Portable`.
 
 Gradle package outputs are under `desktop/build/compose/binaries/`; CI uploads only the staged final artifacts, not that build directory.
 
@@ -46,7 +46,7 @@ The build workflow targets the `Desktop-Windows-Verison` branch and runs on `win
 
 ## Supported Windows versions
 
-- Windows 10
+- Windows 10 version 1809 or later
 - Windows 11
 
 ## Bluetooth and hardware note
@@ -61,7 +61,8 @@ The current repository does not contain a functional Bluetooth smart-mat impleme
 
 ## Troubleshooting
 
-- If Gradle reports a Java version issue, install JDK 21 and ensure `java` and `jpackage` resolve from that JDK.
+- If Gradle reports a Java version issue, use 64-bit JDK 21. CI pins `JAVA_HOME`, verifies `java`, `javac`, and `jpackage`, and fails if another JDK version is selected.
+- The packaged application includes its own Java runtime; end users do not need Java or a JDK installed separately.
 - If the installer task cannot find WiX, install WiX Toolset 3.14.1 and ensure its `bin` directory is on `PATH`.
 - If packaging is missing, ensure the Compose plugin and the `desktop` project are configured correctly.
 - If tests fail, run `./gradlew -p desktop test --console=plain` and inspect the failing report.

@@ -24,6 +24,10 @@ jobs:
           java-version: '21'
           architecture: x64
 
+      - name: Pin and verify JDK 21
+        shell: pwsh
+        run: ./scripts/pin-jdk21.ps1
+
       - name: Resolve release version
         id: version
         shell: pwsh
@@ -51,16 +55,46 @@ jobs:
 
       - name: Run desktop tests
         shell: pwsh
-        run: .\gradlew.bat -p desktop clean test --no-daemon --console=plain
+        run: |
+          ./scripts/pin-jdk21.ps1 -VerifyOnly
+          .\gradlew.bat -p desktop clean test --no-daemon --console=plain
 
-      - name: Build release artifacts
+      - name: Build Windows application image
         shell: pwsh
-        run: .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain
+        run: |
+          ./scripts/pin-jdk21.ps1 -VerifyOnly
+          .\gradlew.bat -p desktop createReleaseDistributable --no-daemon --console=plain
+
+      - name: Build release installer
+        shell: pwsh
+        run: |
+          ./scripts/pin-jdk21.ps1 -VerifyOnly
+          .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain
+
+      - name: Stage and verify release artifacts
+        shell: pwsh
+        run: ./scripts/verify-windows-distribution.ps1 -BinaryRoot "desktop/build/compose/binaries" -ArtifactRoot "artifacts" -Version $env:APP_VERSION
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoorConnect-Windows-Installer
+          path: artifacts/installer/NoorConnect-Setup-${{ env.APP_VERSION }}.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Windows portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoorConnect-Windows-Portable
+          path: artifacts/portable/NoorConnect-${{ env.APP_VERSION }}/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: desktop/build/compose/binaries/**/exe/NoorConnect-${{ steps.version.outputs.version }}.exe
+          files: artifacts/installer/NoorConnect-Setup-${{ steps.version.outputs.version }}.exe
           draft: false
           generate_release_notes: true
           fail_on_unmatched_files: true

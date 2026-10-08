@@ -30,6 +30,10 @@ jobs:
           java-version: '21'
           architecture: x64
 
+      - name: Pin and verify JDK 21
+        shell: pwsh
+        run: ./scripts/pin-jdk21.ps1
+
       - name: Install WiX Toolset
         shell: pwsh
         run: |
@@ -53,98 +57,29 @@ jobs:
 
       - name: Verify Java and jpackage
         shell: pwsh
-        run: |
-          java -version
-          if (-not (Get-Command jpackage -ErrorAction SilentlyContinue)) {
-            throw "jpackage is required but was not found on PATH."
-          }
-          jpackage --version
+        run: ./scripts/pin-jdk21.ps1 -VerifyOnly
 
       - name: Run desktop tests
         shell: pwsh
-        run: .\gradlew.bat -p desktop clean test --no-daemon --console=plain
+        run: |
+          ./scripts/pin-jdk21.ps1 -VerifyOnly
+          .\gradlew.bat -p desktop clean test --no-daemon --console=plain
+
+      - name: Build Windows application image
+        shell: pwsh
+        run: |
+          ./scripts/pin-jdk21.ps1 -VerifyOnly
+          .\gradlew.bat -p desktop createReleaseDistributable --no-daemon --console=plain
 
       - name: Build Windows setup EXE
         shell: pwsh
-        run: .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain
-
-      - name: Build portable Windows app image
-        shell: pwsh
-        run: .\gradlew.bat -p desktop createReleaseDistributable --no-daemon --console=plain
+        run: |
+          ./scripts/pin-jdk21.ps1 -VerifyOnly
+          .\gradlew.bat -p desktop packageReleaseExe --no-daemon --console=plain
 
       - name: Stage and verify final artifacts
         shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $version = $env:APP_VERSION
-          $binaryRoot = Join-Path $env:GITHUB_WORKSPACE "desktop\build\compose\binaries"
-          $artifactRoot = Join-Path $env:GITHUB_WORKSPACE "artifacts"
-          $installerDir = Join-Path $artifactRoot "installer"
-          $portableDir = Join-Path $artifactRoot "portable\NoorConnect-$version"
-
-          if (Test-Path $artifactRoot) {
-            Remove-Item $artifactRoot -Recurse -Force
-          }
-          New-Item $installerDir -ItemType Directory -Force | Out-Null
-          New-Item $portableDir -ItemType Directory -Force | Out-Null
-
-          $installerName = "NoorConnect-$version.exe"
-          $installer = Get-ChildItem $binaryRoot -Recurse -File -Filter $installerName |
-            Where-Object { $_.Directory.Name -eq "exe" } |
-            Select-Object -First 1
-          if (-not $installer -or $installer.Length -le 0) {
-            throw "Expected Windows setup executable '$installerName' was not generated under $binaryRoot."
-          }
-          $installerBytes = [System.IO.File]::ReadAllBytes($installer.FullName)
-          if ($installerBytes.Length -lt 2 -or $installerBytes[0] -ne 0x4D -or $installerBytes[1] -ne 0x5A) {
-            throw "The generated setup executable does not have a valid Windows PE signature."
-          }
-          Copy-Item $installer.FullName (Join-Path $installerDir "NoorConnect-Setup-$version.exe")
-
-          $appImage = $null
-          $appLauncher = $null
-          $appConfigs = Get-ChildItem $binaryRoot -Recurse -File -Filter "*.cfg" |
-            Where-Object { $_.Directory.Name -eq "app" }
-          foreach ($appConfig in $appConfigs) {
-            $candidateRoot = $appConfig.Directory.Parent
-            $candidateLauncher = Join-Path $candidateRoot.FullName "$($appConfig.BaseName).exe"
-            $runtimeConfig = Join-Path $candidateRoot.FullName "runtime\lib\jvm.cfg"
-            $runtimeModules = Join-Path $candidateRoot.FullName "runtime\lib\modules"
-            if ((Test-Path $candidateLauncher) -and (Test-Path $runtimeConfig) -and (Test-Path $runtimeModules)) {
-              $appImage = $candidateRoot
-              $appLauncher = Get-Item $candidateLauncher
-              break
-            }
-          }
-          if (-not $appImage) {
-            Get-ChildItem $binaryRoot -Recurse -File -Include "*.cfg", "*.exe" |
-              Select-Object -First 30 -ExpandProperty FullName |
-              ForEach-Object { Write-Host "Portable candidate: $_" }
-            throw "The runtime-inclusive portable app image was not generated under $binaryRoot."
-          }
-          Copy-Item (Join-Path $appImage.FullName "*") $portableDir -Recurse -Force
-
-          $portableExe = Join-Path $portableDir "NoorConnect-$version.exe"
-          Copy-Item $appLauncher.FullName $portableExe
-          $launcherConfig = Join-Path (Join-Path $portableDir "app") "$($appLauncher.BaseName).cfg"
-          if (-not (Test-Path $launcherConfig)) {
-            throw "The portable app image is missing app\$($appLauncher.BaseName).cfg; refusing to publish an incomplete app."
-          }
-          Copy-Item $launcherConfig (Join-Path (Join-Path $portableDir "app") "NoorConnect-$version.cfg")
-
-          $portableBytes = [System.IO.File]::ReadAllBytes($portableExe)
-          if ($portableBytes.Length -lt 2 -or $portableBytes[0] -ne 0x4D -or $portableBytes[1] -ne 0x5A) {
-            throw "The portable executable does not have a valid Windows PE signature."
-          }
-          if (-not (Test-Path (Join-Path $portableDir "runtime\lib\jvm.cfg")) -or
-              -not (Test-Path (Join-Path $portableDir "runtime\lib\modules"))) {
-            throw "The portable app image is missing its bundled Java runtime."
-          }
-
-          Get-ChildItem $installerDir -File | Select-Object Name, Length
-          Get-ChildItem $portableDir -Recurse -File |
-            Where-Object { $_.Name -eq "NoorConnect-$version.exe" -or $_.Name -eq "NoorConnect-$version.cfg" } |
-            Select-Object FullName, Length
+        run: ./scripts/verify-windows-distribution.ps1 -BinaryRoot "desktop/build/compose/binaries" -ArtifactRoot "artifacts" -Version $env:APP_VERSION
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
