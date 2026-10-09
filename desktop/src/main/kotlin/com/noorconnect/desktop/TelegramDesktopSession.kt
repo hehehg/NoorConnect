@@ -16,6 +16,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import org.drinkless.tdlib.Client
 import org.drinkless.tdlib.TdApi
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -35,6 +36,7 @@ class TelegramDesktopSession {
     private val rootDirectory = Paths.get(System.getProperty("user.home"), ".noorconnect", "telegram")
     private val databaseDirectory = rootDirectory.resolve("database")
     private val filesDirectory = rootDirectory.resolve("files")
+    private val databaseKeyStore = TelegramDatabaseKeyStore()
     private val clientReady = CompletableDeferred<Unit>()
     private var client: Client? = null
 
@@ -112,6 +114,48 @@ class TelegramDesktopSession {
         }
     }
 
+    fun sendMedia(chatId: Long, path: String) {
+        scope.launch {
+            runCatching {
+                val file = Paths.get(path)
+                require(Files.isRegularFile(file) && Files.isReadable(file)) { "اختر ملفًا عاديًا يمكن قراءته" }
+                require(Files.size(file) > 0L) { "الملف فارغ" }
+                val inputFile = TdApi.InputFileLocal(file.toAbsolutePath().toString())
+                val content: TdApi.InputMessageContent = when (mimeType(file).substringBefore('/')) {
+                    "image" -> TdApi.InputMessagePhoto(TdApi.InputPhoto(inputFile, null, null, IntArray(0), 0, 0), null, false, null, false)
+                    "video" -> TdApi.InputMessageVideo(TdApi.InputVideo(inputFile, null, null, 0, IntArray(0), 0, 0, 0, true), null, false, null, false)
+                    else -> TdApi.InputMessageDocument(TdApi.InputDocument(inputFile, null, false), null)
+                }
+                val sent = request(TdApi.SendMessage(chatId, null, null, null, null, content))
+                addMessage(sent.toDesktopMessage())
+                _error.value = null
+            }.onFailure { _error.value = it.message ?: "تعذر إرسال الملف" }
+        }
+    }
+
+    fun downloadMedia(chatId: Long, messageId: Long) {
+        scope.launch {
+            runCatching {
+                val message = _messagesByChat.value[chatId].orEmpty().firstOrNull { it.id == messageId }
+                    ?: error("الرسالة غير موجودة")
+                val fileId = message.mediaFileId ?: error("لا يوجد مرفق قابل للتنزيل")
+                val file = request(TdApi.DownloadFile(fileId, 16, 0, 0, true))
+                val localPath = file.local?.path?.takeIf { file.local.isDownloadingCompleted && it.isNotBlank() }
+                    ?: error("اكتمل الطلب لكن الملف لم يصبح متاحًا محليًا")
+                _messagesByChat.value = _messagesByChat.value + (
+                    chatId to _messagesByChat.value[chatId].orEmpty().map {
+                        if (it.id == messageId) it.copy(localMediaPath = localPath) else it
+                    }
+                )
+                _error.value = null
+            }.onFailure { _error.value = it.message ?: "تعذر تنزيل الملف" }
+        }
+    }
+
+    fun logout() {
+        submit { request(TdApi.LogOut()) }
+    }
+
     fun clearError() {
         _error.value = null
     }
@@ -160,6 +204,7 @@ class TelegramDesktopSession {
                     useMessageDatabase = true
                     useChatInfoDatabase = true
                     useFileDatabase = true
+                    databaseEncryptionKey = databaseKeyStore.loadOrCreate()
                     useTestDc = false
                     apiId = credentials.apiId
                     apiHash = credentials.apiHash
@@ -271,8 +316,39 @@ class TelegramDesktopSession {
             is TdApi.MessageSenderChat -> "Chat ${messageSender.chatId}"
             else -> "Telegram"
         }
-        return Message(id = id, chatId = chatId, text = body, senderName = sender, timestamp = date.toLong(), isOutgoing = isOutgoing)
+        val mediaFile = when (val messageContent = content) {
+            is TdApi.MessagePhoto -> messageContent.photo?.sizes?.filterNotNull()?.maxByOrNull { it.width }?.photo
+            is TdApi.MessageVideo -> messageContent.video?.video
+            is TdApi.MessageAnimation -> messageContent.animation?.animation
+            is TdApi.MessageDocument -> messageContent.document?.document
+            is TdApi.MessageAudio -> messageContent.audio?.audio
+            is TdApi.MessageVoiceNote -> messageContent.voiceNote?.voice
+            is TdApi.MessageVideoNote -> messageContent.videoNote?.video
+            is TdApi.MessageSticker -> messageContent.sticker?.sticker
+            else -> null
+        }
+        val mediaKind = when (content) {
+            is TdApi.MessagePhoto -> "صورة"
+            is TdApi.MessageVideo, is TdApi.MessageVideoNote, is TdApi.MessageAnimation -> "فيديو"
+            is TdApi.MessageAudio -> "صوت"
+            is TdApi.MessageVoiceNote -> "رسالة صوتية"
+            is TdApi.MessageDocument -> "ملف"
+            is TdApi.MessageSticker -> "ملصق"
+            else -> null
+        }
+        return Message(
+            id = id,
+            chatId = chatId,
+            text = body,
+            senderName = sender,
+            timestamp = date.toLong(),
+            isOutgoing = isOutgoing,
+            mediaFileId = mediaFile?.id,
+            mediaKind = mediaKind,
+        )
     }
+
+    private fun mimeType(path: Path): String = runCatching { Files.probeContentType(path) }.getOrNull().orEmpty()
 
     private class TdLibRequestException(val code: Int, message: String) : RuntimeException("TDLib $code: $message")
 

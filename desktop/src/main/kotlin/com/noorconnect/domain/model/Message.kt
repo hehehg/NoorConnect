@@ -10,4 +10,7 @@ data class Message(
     val senderName: String = "",
     val timestamp: Long = 0L,
     val isOutgoing: Boolean = false,
+    val mediaFileId: Int? = null,
+    val mediaKind: String? = null,
+    val localMediaPath: String? = null,
 )
