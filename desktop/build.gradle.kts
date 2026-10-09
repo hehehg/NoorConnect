@@ -16,13 +16,22 @@ version = appVersion
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(21))
-        vendor.set(org.gradle.jvm.toolchain.JvmVendorSpec.ADOPTIUM)
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir("../core/tdlib/src/main/java")
+            include("org/drinkless/tdlib/**")
+        }
     }
 }
 
 dependencies {
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
+    implementation("androidx.annotation:annotation:1.9.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 
@@ -32,6 +41,7 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "com.noorconnect.desktop.MainKt"
+        jvmArgs += listOf("-Djava.library.path=\$APPDIR\\resources\\native;\$APPDIR\\runtime\\bin;\$APPDIR")
         buildTypes {
             release {
                 proguard {

@@ -28,6 +28,10 @@ jobs:
         shell: pwsh
         run: ./scripts/pin-jdk21.ps1
 
+      - name: Build TDLib JNI for Windows x64
+        shell: pwsh
+        run: ./scripts/build-tdlib-windows.ps1
+
       - name: Resolve release version
         id: version
         shell: pwsh

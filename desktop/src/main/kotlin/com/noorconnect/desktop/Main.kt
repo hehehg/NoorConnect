@@ -63,105 +63,7 @@ fun main() = application {
 
 @Composable
 fun NoorConnectDesktopApp() {
-    val store = remember { SettingsStore() }
-    var settings by remember { mutableStateOf(store.load()) }
-    val chats = remember {
-        listOf(
-            Chat(
-                id = 1L,
-                title = "Quran Circle",
-                lastMessage = Message(
-                    id = 100L,
-                    senderName = "Aisha",
-                    text = "New session is live.",
-                    timestamp = Instant.now().epochSecond,
-                ),
-                unreadCount = 3,
-                isChannel = true,
-                isGroup = false,
-                moderationStatus = ChatModerationStatus.Unreviewed,
-            ),
-            Chat(
-                id = 2L,
-                title = "Community Admin",
-                lastMessage = Message(
-                    id = 101L,
-                    senderName = "Support",
-                    text = "Approved by the team.",
-                    timestamp = Instant.now().epochSecond,
-                ),
-                unreadCount = 0,
-                isChannel = false,
-                isGroup = true,
-                moderationStatus = ChatModerationStatus.Whitelisted,
-            ),
-            Chat(
-                id = 3L,
-                title = "SPAM team",
-                lastMessage = Message(
-                    id = 102L,
-                    senderName = "Bot",
-                    text = "Daily reminder.",
-                    timestamp = Instant.now().epochSecond,
-                ),
-                unreadCount = 1,
-                isChannel = false,
-                isGroup = true,
-                moderationStatus = ChatModerationStatus.Unreviewed,
-            ),
-        )
-    }
-
-    val visibleChats = chats.filter { NoorConnectWindowsFilter.isAllowed(it, settings) }
-    val allChatsCount = chats.size
-    val visibleCount = visibleChats.size
-
-    MaterialTheme(colorScheme = MaterialTheme.colorScheme) {
-        Surface(color = MaterialTheme.colorScheme.background) {
-            Row(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
-                Sidebar(modifier = Modifier.width(220.dp))
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    HeaderCard(title = "NoorConnect desktop", subtitle = "$visibleCount of $allChatsCount chats accessible")
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        StatCard(title = "Allowed", value = visibleCount.toString(), accent = Color(0xFF2E7D32), modifier = Modifier.weight(1f))
-                        StatCard(title = "Blocked", value = (allChatsCount - visibleCount).toString(), accent = Color(0xFFD32F2F), modifier = Modifier.weight(1f))
-                        StatCard(title = "Settings", value = if (settings.notificationsEnabled) "Enabled" else "Muted", accent = Color(0xFF1976D2), modifier = Modifier.weight(1f))
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        Column(
-                            modifier = Modifier.weight(1f).fillMaxHeight().background(Color(0xFFF7F9FC), RoundedCornerShape(16.dp)).padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Text("Chats", style = MaterialTheme.typography.titleMedium)
-                            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                                visibleChats.forEach { chat ->
-                                    ChatRow(chat = chat)
-                                }
-                            }
-                        }
-
-                        Column(
-                            modifier = Modifier.weight(1f).fillMaxHeight().background(Color(0xFFF7F9FC), RoundedCornerShape(16.dp)).padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Text("Moderation settings", style = MaterialTheme.typography.titleMedium)
-                            SettingsEditor(settings = settings, onChanged = {
-                                settings = it
-                                store.save(it)
-                            })
-                        }
-                    }
-                }
-            }
-        }
-    }
+    TelegramDesktopRoot()
 }
 
 @Composable
@@ -240,7 +142,7 @@ private fun ChatRow(chat: Chat) {
 }
 
 @Composable
-private fun SettingsEditor(settings: ModerationSettings, onChanged: (ModerationSettings) -> Unit) {
+fun SettingsEditor(settings: ModerationSettings, onChanged: (ModerationSettings) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ToggleRow(
             label = "Allow unverified channels",

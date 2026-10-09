@@ -16,15 +16,20 @@ This approach is the safest fit for the current repo because the actual codebase
 
 ## Windows build
 
-Use Windows with JDK 21 and WiX Toolset 3.14.1 installed. From the repository root in PowerShell:
+Use Windows x64 with JDK 21, Visual Studio C++ build tools, CMake, Git, and WiX Toolset 3.14.1 installed. From the repository root in PowerShell:
 
 ```powershell
+./scripts/build-tdlib-windows.ps1
 .\gradlew.bat -p desktop clean test --no-daemon --console=plain -PappVersion=1.0.0
 .\gradlew.bat -p desktop createDistributable --no-daemon --console=plain -PappVersion=1.0.0
 .\gradlew.bat -p desktop packageExe --no-daemon --console=plain -PappVersion=1.0.0
 ```
 
-The desktop toolchain is pinned to 64-bit Eclipse Temurin JDK 21. The standard Compose packaging tasks avoid release ProGuard transformations that can invalidate coroutine bytecode. jpackage creates an application image with a linked Java runtime; the setup executable installs that complete image, and the portable artifact contains the same launcher, `.cfg`, application resources, native libraries, and `runtime/` directory. GitHub Actions checks launch output with `JAVA_HOME`, `JDK_HOME`, and Java removed from `PATH` before publishing `NoorConnect-Windows-Installer` and `NoorConnect-Windows-Portable`.
+The native build script pins TDLib to the revision matching the checked-in Java API, builds `tdjni.dll` for x64 with vcpkg OpenSSL/zlib dependencies, and stages the DLLs in desktop resources. Windows CI installs 64-bit Eclipse Temurin JDK 21 and runs this build before packaging. Standard Compose packaging tasks avoid release ProGuard transformations that previously invalidated coroutine bytecode. jpackage creates an application image with a linked Java runtime; the setup executable installs that complete image, and the portable artifact contains the same launcher, `.cfg`, application resources, native libraries, and `runtime/` directory. CI verifies those files and starts the app with Java removed from `PATH` before publishing `NoorConnect-Windows-Installer` and `NoorConnect-Windows-Portable`.
+
+## Telegram login
+
+On first launch, enter the Telegram `api_id` and `api_hash` from [my.telegram.org/apps](https://my.telegram.org/apps), then complete phone-number, code, and optional two-step-password verification. The API credentials are stored in the current Windows user's preferences; the account session database is stored under `%USERPROFILE%\.noorconnect\telegram`. Never commit personal account credentials. The initial Windows integration supports authentication, loading chats and recent text history, and sending text messages; media, calls, secret chats, and other Telegram client features are not yet implemented on desktop.
 
 Gradle package outputs are under `desktop/build/compose/binaries/`; CI uploads only the staged final artifacts, not that build directory.
 

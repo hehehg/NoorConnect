@@ -55,6 +55,16 @@ function Assert-AppImage([string]$Root) {
         throw "Application image is missing its application/dependency JARs under '$appDirectory'."
     }
 
+    $nativeResourceDirectory = Join-Path $appDirectory "resources\native"
+    $tdlibJni = Join-Path $nativeResourceDirectory "tdjni.dll"
+    if (-not (Test-Path $tdlibJni)) {
+        throw "Application image is missing the Windows x64 TDLib JNI library: $tdlibJni"
+    }
+    $tdlibDependencies = @(Get-ChildItem $nativeResourceDirectory -File -Filter "*.dll" -ErrorAction SilentlyContinue)
+    if ($tdlibDependencies.Count -lt 1) {
+        throw "Application image is missing TDLib native dependency DLLs under '$nativeResourceDirectory'."
+    }
+
     $nativeAppLibrary = Get-ChildItem $appDirectory -Recurse -File -Filter "*.dll" -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if (-not $nativeAppLibrary) {
@@ -86,7 +96,7 @@ function Assert-AppImage([string]$Root) {
     Write-Output "Launcher config: $($config.FullName)"
     Write-Output "Bundled runtime: $($Root)\runtime"
     Write-Output "Native JVM libraries: $($nativeLibraries.Count) DLL files"
-    Write-Output "Application JARs and native UI libraries are present."
+    Write-Output "Application JARs, UI libraries, and TDLib JNI are present ($($tdlibDependencies.Count) TDLib DLLs)."
 }
 
 function Test-LaunchWithoutSystemJava([string]$Launcher) {
@@ -144,6 +154,23 @@ function Test-LaunchWithoutSystemJava([string]$Launcher) {
     }
 }
 
+function Test-TdlibJni([string]$Root) {
+    $bundledJava = Join-Path $Root "runtime\bin\java.exe"
+    if (-not (Test-Path $bundledJava)) {
+        $bundledJava = Join-Path $env:JAVA_HOME "bin\java.exe"
+    }
+
+    $testClasses = Join-Path $env:GITHUB_WORKSPACE "desktop\build\classes\java\test"
+    $mainClasses = Join-Path $env:GITHUB_WORKSPACE "desktop\build\classes\java\main"
+    $classPath = "$testClasses;$mainClasses"
+    $nativePath = "$(Join-Path $Root 'app\resources\native');$(Join-Path $Root 'runtime\bin')"
+    $output = & $bundledJava "-Djava.library.path=$nativePath" -cp $classPath com.noorconnect.desktop.TdLibNativeSmoke 2>&1
+    if ($LASTEXITCODE -ne 0 -or ($output -join [Environment]::NewLine) -notmatch 'TDLib JNI client created successfully') {
+        throw "TDLib JNI smoke test failed for '$Root':`n$($output -join [Environment]::NewLine)"
+    }
+    Write-Output "TDLib JNI loaded and created a client in: $Root"
+}
+
 $binaryRoot = (Resolve-Path $BinaryRoot).Path
 $artifactRoot = [System.IO.Path]::GetFullPath($ArtifactRoot)
 $installerName = "NoorConnect-$Version.exe"
@@ -163,6 +190,7 @@ if (-not $appConfig) {
 }
 $appImage = $appConfig.Directory.Parent.FullName
 Assert-AppImage $appImage
+Test-TdlibJni $appImage
 Test-LaunchWithoutSystemJava (Join-Path $appImage "$($appConfig.BaseName).exe")
 
 if (Test-Path $artifactRoot) {
@@ -176,6 +204,7 @@ Copy-Item $installer.FullName (Join-Path $installerDirectory "NoorConnect-Setup-
 Copy-Item (Join-Path $appImage "*") $portableDirectory -Recurse -Force
 
 Assert-AppImage $portableDirectory
+Test-TdlibJni $portableDirectory
 Test-LaunchWithoutSystemJava (Join-Path $portableDirectory "$($appConfig.BaseName).exe")
 
 $installedDirectory = Join-Path $env:ProgramFiles "NoorConnect"
@@ -187,6 +216,7 @@ if (-not (Test-Path $installedDirectory)) {
     throw "Installer completed but did not install the application at '$installedDirectory'."
 }
 Assert-AppImage $installedDirectory
+Test-TdlibJni $installedDirectory
 Test-LaunchWithoutSystemJava (Join-Path $installedDirectory "$($appConfig.BaseName).exe")
 
 Write-Output "Verified installer: $($installer.FullName)"

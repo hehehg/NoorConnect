@@ -14,11 +14,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class Client {
     static {
-        try {
-            System.loadLibrary("tdjni");
-        } catch (UnsatisfiedLinkError e) {
-            e.printStackTrace();
-        }
+        TdLibNativeLoader.load();
     }
 
     /**
